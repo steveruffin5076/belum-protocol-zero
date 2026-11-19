@@ -1,6 +1,16 @@
-// src/main.js - Belum: Protocol Zero (Act 1) Master Game Loop, State Machine & Combat Coordinator
+// src/main.js - Belum: Protocol Zero (Act 1) AAA Polish Master Game Loop & State Coordinator
+// Includes: 45ms Combat Hit-Stop, Ink-Bleed Puddles, Directional Trauma, Haptics, Foliage Rustle,
+// Wet Mud Footprints, Boar Matador Wall-Stun, Diegetic Calligraphy Badges & Sector Checkpoint Auto-Save.
 (function (global) {
   'use strict';
+
+  const CHECKPOINT_KEY = 'belum_checkpoint';
+  const SECTOR_SPAWNS = {
+    1: { x: 185, y: 645 },
+    2: { x: 1110, y: 640 },
+    3: { x: 2205, y: 650 },
+    4: { x: 3255, y: 640 }
+  };
 
   class BelumProtocolZeroGame {
     constructor() {
@@ -9,6 +19,7 @@
       this.mode = 'PROLOGUE'; // 'PROLOGUE' | 'PLAYING' | 'CAMP' | 'VICTORY' | 'GAME_OVER'
       this.lastTs = 0;
       this.rafId = null;
+      this.hitStopTimer = 0;
 
       // Core subsystems
       this.sound = this.ns.SoundEngine ? new this.ns.SoundEngine() : null;
@@ -17,7 +28,10 @@
       this.input = this.ns.InputManager
         ? new this.ns.InputManager(this.canvas, {
             onToggleMute: () => this._toggleMute(),
-            onOpenDossier: () => this.hud && this.hud.openUtility('dossier')
+            onOpenDossier: () => this.hud && this.hud.openUtility('dossier'),
+            onUserGesture: () => {
+              if (this.sound) this.sound.unlock();
+            }
           })
         : null;
 
@@ -28,11 +42,13 @@
             },
             onCraftSuccess: () => {
               if (this.sound) this.sound.playDecoyClatter();
+              this._saveSectorCheckpoint(this.currentSectorId, true);
             },
             onDriveDecrypted: (entry) => {
               this.stats.drivesDecrypted++;
               if (this.sound) this.sound.playRadioAlert();
               if (this.hud) this.hud.showToast(`DECRYPTED: ${entry.title}`, 3.5);
+              this._saveSectorCheckpoint(this.currentSectorId, true);
             }
           })
         : null;
@@ -42,6 +58,7 @@
             onOpenCamp: () => this.tryOpenCamp(),
             onSelectWeapon: (wid) => this._selectWeapon(wid),
             onToggleMute: () => this._toggleMute(),
+            onAudioBadgeClick: () => this._handleAudioBadgeClick(),
             getSnapshot: () => ({
               player: this.player,
               audioMuted: this.sound ? this.sound.muted : false
@@ -63,6 +80,49 @@
       this._startLoop();
     }
 
+    _vibrate(pattern) {
+      if (this.ns.InputManager && typeof this.ns.InputManager.vibrate === 'function') {
+        this.ns.InputManager.vibrate(pattern);
+      }
+    }
+
+    triggerHitStop(durationMs) {
+      const ms = Number.isFinite(durationMs) ? durationMs : 45;
+      this.hitStopTimer = Math.max(this.hitStopTimer, ms / 1000.0);
+    }
+
+    _spawnInkPuddle(x, y, baseRadius) {
+      const r = baseRadius || 30;
+      this.inkPuddles.push({
+        x,
+        y,
+        baseRadius: r,
+        age: 0,
+        growDuration: 2.4,
+        lobes: [
+          { rx: r, ry: r * 0.62, ox: 0, oy: 0, rot: (Math.random() - 0.5) * 0.5 },
+          { rx: r * 0.72, ry: r * 0.48, ox: (Math.random() - 0.5) * r * 0.9, oy: (Math.random() - 0.5) * r * 0.45, rot: Math.random() * Math.PI },
+          { rx: r * 0.58, ry: r * 0.38, ox: (Math.random() - 0.5) * r * 1.1, oy: (Math.random() - 0.5) * r * 0.55, rot: Math.random() * Math.PI }
+        ]
+      });
+    }
+
+    _spawnLeafSpecks(x, y, count) {
+      const n = count || 3;
+      for (let i = 0; i < n; i++) {
+        this.leafParticles.push({
+          x: x + (Math.random() - 0.5) * 28,
+          y: y + (Math.random() - 0.5) * 18,
+          vx: (Math.random() - 0.5) * 44,
+          vy: -28 - Math.random() * 28,
+          rot: Math.random() * Math.PI * 2,
+          vrot: (Math.random() - 0.5) * 8,
+          age: 0,
+          duration: 0.75 + Math.random() * 0.35
+        });
+      }
+    }
+
     _bindEndgameAndResize() {
       if (typeof window === 'undefined' || typeof document === 'undefined') return;
       const onResize = () => {
@@ -74,14 +134,87 @@
       window.addEventListener('resize', onResize);
       onResize();
 
+      const btnRetrySector = document.getElementById('btn-retry-sector');
+      if (btnRetrySector) {
+        btnRetrySector.addEventListener('click', () => {
+          const modal = document.getElementById('endgame-modal');
+          if (modal) modal.classList.add('hidden');
+          this.retryFromCheckpoint();
+        });
+      }
+
       const btnRestart = document.getElementById('btn-restart-game');
       if (btnRestart) {
         btnRestart.addEventListener('click', () => {
           const modal = document.getElementById('endgame-modal');
           if (modal) modal.classList.add('hidden');
+          this._clearCheckpoint();
           this.resetAct1();
           this.startGameplay();
         });
+      }
+    }
+
+    _saveSectorCheckpoint(sectorId, silent) {
+      if (!this.player || typeof localStorage === 'undefined') return;
+      try {
+        const data = {
+          sector: sectorId || 1,
+          spawn: SECTOR_SPAWNS[sectorId] || SECTOR_SPAWNS[1],
+          activeWeapon: this.player.activeWeapon,
+          unlockedWeapons: Object.assign({}, this.player.unlockedWeapons),
+          ammo: Object.assign({}, this.player.ammo),
+          inventory: JSON.parse(JSON.stringify(this.player.inventory))
+        };
+        localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
+        if (!silent && this.hud) {
+          this.hud.showToast(`CHECKPOINT SAVED // SECTOR ${sectorId}`, 2.4);
+        }
+      } catch (_) {
+        // Ignore storage quota / private mode errors
+      }
+    }
+
+    _loadCheckpoint() {
+      if (typeof localStorage === 'undefined') return null;
+      try {
+        const raw = localStorage.getItem(CHECKPOINT_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    _clearCheckpoint() {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        localStorage.removeItem(CHECKPOINT_KEY);
+      } catch (_) {}
+    }
+
+    retryFromCheckpoint() {
+      const cp = this._loadCheckpoint();
+      this.resetAct1();
+      if (cp && this.player) {
+        const sp = cp.spawn || SECTOR_SPAWNS[cp.sector] || SECTOR_SPAWNS[1];
+        this.player.x = sp.x;
+        this.player.y = sp.y;
+        this.player.hp = this.player.maxHp;
+        this.player.stamina = this.player.maxStamina;
+        if (cp.unlockedWeapons) this.player.unlockedWeapons = Object.assign({}, this.player.unlockedWeapons, cp.unlockedWeapons);
+        if (cp.ammo) this.player.ammo = Object.assign({}, this.player.ammo, cp.ammo);
+        if (cp.inventory) this.player.inventory = Object.assign({}, this.player.inventory, cp.inventory);
+        if (cp.activeWeapon && this.player.unlockedWeapons[cp.activeWeapon]) {
+          this.player.activeWeapon = cp.activeWeapon;
+        }
+        this.currentSectorId = cp.sector || 1;
+        this.highestSavedSector = this.currentSectorId;
+        if (this.camera) this.camera.snapTo(this.player.centerX, this.player.centerY);
+      }
+      this.mode = 'PLAYING';
+      if (this.hud) {
+        this.hud.show();
+        this.hud.showToast(`RESPAWNED AT SECTOR ${this.currentSectorId} CHECKPOINT`, 2.8);
       }
     }
 
@@ -97,12 +230,22 @@
       this.acousticRings = [];
       this.floatingTexts = [];
       this.slashEffects = [];
+      this.inkPuddles = [];
+      this.footprints = [];
+      this.leafParticles = [];
+      this.diegeticBadge = null;
 
       this.elapsedSec = 0;
+      this.hitStopTimer = 0;
       this.inCombat = false;
+      this.currentSectorId = 1;
+      this.highestSavedSector = 1;
       this.currentSectorLabel = 'SECTOR 1 // SUNGAI BELUM RIVERBANK';
       this.interactHint = '';
       this.klaxonTimer = 0;
+      this.footprintDistAccum = 0;
+      this.footprintStepSide = 1;
+      this.lastPlayerPos = { x: sx, y: sy };
 
       this.stats = {
         stealthTakedowns: 0,
@@ -120,9 +263,22 @@
 
     startGameplay() {
       this.mode = 'PLAYING';
+      if (this.sound) this.sound.unlock();
+      this._saveSectorCheckpoint(1, true);
       if (this.hud) {
         this.hud.show();
         this.hud.showToast('INSERTION COMPLETE — STAY LOW IN FERNS & BEHIND LOGS', 3.5);
+      }
+    }
+
+    _handleAudioBadgeClick() {
+      if (!this.sound) return;
+      if (!this.sound.ctx || this.sound.ctx.state !== 'running') {
+        this.sound.muted = false;
+        this.sound.unlock();
+        if (this.hud) this.hud.showToast('AUDIO ACTIVE — RAIN & CICADAS ONLINE', 1.8);
+      } else {
+        this._toggleMute();
       }
     }
 
@@ -165,7 +321,13 @@
         this.lastTs = ts;
 
         if (this.mode === 'PLAYING') {
-          this.update(dt);
+          if (this.hitStopTimer > 0) {
+            // AAA 45ms Combat Hit-Stop: freeze entity logic while maintaining camera shake & particle rendering
+            this.hitStopTimer = Math.max(0, this.hitStopTimer - dt);
+            if (this.camera) this.camera.updateShakeOnly(dt);
+          } else {
+            this.update(dt);
+          }
         }
 
         if (this.renderer) {
@@ -190,6 +352,10 @@
         acousticRings: this.acousticRings,
         floatingTexts: this.floatingTexts,
         slashEffects: this.slashEffects,
+        inkPuddles: this.inkPuddles,
+        footprints: this.footprints,
+        leafParticles: this.leafParticles,
+        diegeticBadge: this.diegeticBadge,
         camera: this.camera
       };
     }
@@ -218,6 +384,8 @@
         inCombat: this.inCombat,
         currentSectorLabel: this.currentSectorLabel,
         interactHint: this.interactHint,
+        audioActive: this.sound ? this.sound.isActive() : false,
+        audioStatusLabel: this.sound ? this.sound.getStatusLabel() : '[TAP TO UNMUTE]',
         objectives: this._getObjectives()
       };
     }
@@ -250,22 +418,33 @@
         }
       }
 
-      // 2. Update Player
+      // 2. Update Player & AAA Spring Camera (with stealth/sprint zoom)
+      const prevX = this.player.centerX;
+      const prevY = this.player.centerY;
       this.player.update(dt, this.input, this.level);
       if (this.camera) {
-        this.camera.update(dt, this.player.centerX, this.player.centerY, this.input ? this.input.aimVector : null);
+        this.camera.update(
+          dt,
+          this.player.centerX,
+          this.player.centerY,
+          this.input ? this.input.aimVector : null,
+          this.player
+        );
       }
 
-      // 3. Sector Detection & Environmental Hazards (Rafflesia Spores, Floodlights, Tripwires)
+      // 3. Living Environmental Reactivity: Foliage Rustle & Wet Mud Footprints
+      this._updateEnvironmentReactivity(dt, prevX, prevY);
+
+      // 4. Sector Detection, Auto-Checkpoint & Hazards
       this._updateSectorAndHazards(dt);
 
-      // 4. AI Updates (Mercenaries + Mutated Boars + Faction Infighting)
+      // 5. AI Updates (Mercenaries + Mutated Boars + Faction Infighting + Wall-Stun)
       const aiEvents = {
         onRadioAlert: (merc) => {
           this.stats.alertsTriggered++;
+          this._vibrate([30, 50]);
           if (this.sound) this.sound.playRadioAlert();
           this._spawnFloat(merc.centerX, merc.y - 24, 'CONTACT!', '#F85A5A', false);
-          // Nearby guards within 360px investigate radio call
           for (let j = 0; j < this.mercenaries.length; j++) {
             const ally = this.mercenaries[j];
             if (!ally.dead && ally !== merc && Math.hypot(ally.centerX - merc.centerX, ally.centerY - merc.centerY) < 360) {
@@ -296,6 +475,7 @@
         },
         onMercKilled: (merc) => {
           this.stats.enemiesNeutralized++;
+          this._spawnInkPuddle(merc.centerX, merc.y + merc.height - 6, merc.role === 'commander' ? 40 : 30);
           if (merc.role === 'commander') {
             this.player.inventory.hasKeycard = true;
             if (this.hud) this.hud.showToast('COMMANDER WARD ELIMINATED — TIER-1 CLEARANCE SECURED!', 3.2);
@@ -305,28 +485,60 @@
           if (this.sound) this.sound.playBoarRoar();
           this._spawnFloat(boar.centerX, boar.y - 16, '!!', '#F85A5A', true);
         },
-        onBoarCharge: () => {
-          if (this.camera) this.camera.addShake(5, 0.25);
+        onBoarCharge: (boar) => {
+          if (this.camera) this.camera.addTrauma(0.32, boar.chargeDirX, boar.chargeDirY);
         },
-        onBoarImpact: (victim, dmg, label) => {
-          if (this.camera) this.camera.addShake(9, 0.3);
+        onBoarImpact: (victim, dmg, label, boar) => {
+          this.triggerHitStop(45);
+          this._vibrate([40, 60, 80]);
+          const dx = boar ? victim.centerX - boar.centerX : 1;
+          const dy = boar ? victim.centerY - boar.centerY : 0;
+          if (this.camera) this.camera.addTrauma(0.75, dx, dy);
+          if (this.sound) this.sound.playBoarImpact();
           this._spawnFloat(victim.centerX, victim.y - 12, label || String(dmg), '#F85A5A', true);
           if (victim.faction === 'MERC') {
             this.stats.factionInfightingHits++;
             if (this.hud) this.hud.showToast('FACTION INFIGHTING: MUTATED BOAR GORED IRONCLAD PMC!', 2.6);
           }
         },
+        onBoarWallStun: (boar) => {
+          // AAA Matador Wall-Crash Concussion!
+          this.triggerHitStop(45);
+          this._vibrate([40, 60, 80]);
+          if (this.camera) this.camera.addTrauma(0.8, -boar.chargeDirX, -boar.chargeDirY);
+          if (this.sound) this.sound.playBoarImpact();
+          this._spawnFloat(boar.centerX, boar.y - 18, 'CONCUSSED! (2.6s)', '#F85A5A', true);
+          if (this.hud) this.hud.showToast('MATADOR STUN: BOAR SLAMMED INTO WALL!', 2.4);
+        },
         onBoarKilled: (boar) => {
+          this._spawnInkPuddle(boar.centerX, boar.y + boar.height - 6, 38);
           this._spawnFloat(boar.centerX, boar.y - 14, 'BOAR SLAIN', '#111E33', false);
         }
       };
 
       let anyAlert = false;
+      let nearestAlertDist = Infinity;
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         m.update(dt, this.player, this.boars, this.level, aiEvents);
-        if (!m.dead && m.state === 'ALERT' && Math.hypot(m.centerX - this.player.centerX, m.centerY - this.player.centerY) < 750) {
-          anyAlert = true;
+        if (!m.dead) {
+          const distToPlayer = Math.hypot(m.centerX - this.player.centerX, m.centerY - this.player.centerY);
+          if (m.state === 'ALERT' && distToPlayer < 750) {
+            anyAlert = true;
+            if (distToPlayer < nearestAlertDist) nearestAlertDist = distToPlayer;
+          }
+          // AAA Stealth Detail: Mercenaries crossing fresh mud footprints get +20% suspicion & turn to inspect
+          if (m.state === 'PATROL' && this.footprints.length > 0) {
+            for (let f = this.footprints.length - 1; f >= 0; f--) {
+              const fp = this.footprints[f];
+              if (!fp.inspected && Math.hypot(m.centerX - fp.x, m.centerY - fp.y) < 46) {
+                fp.inspected = true;
+                m.inspectFootprint(fp.x, fp.y, fp.angle);
+                this._spawnFloat(m.centerX, m.y - 18, 'TRACKS?', '#111E33', false);
+                break;
+              }
+            }
+          }
         }
       }
       for (let i = 0; i < this.boars.length; i++) {
@@ -334,25 +546,74 @@
       }
       this.inCombat = anyAlert || this.level.blastGateOpening;
 
-      // 5. Update Projectiles & Collisions
+      // 6. Update Projectiles & Collisions
       this._updateProjectiles(dt, aiEvents);
 
-      // 6. Update Blast Gate 15-Second Opening Sequence & Victory Check
+      // 7. Update Blast Gate 15-Second Opening Sequence & Victory Check
       this._updateBlastGateAndExtraction(dt, aiEvents);
 
-      // 7. Update Visual FX (Acoustic rings, slashes, floating damage numbers)
+      // 8. Update Visual FX (Ink Puddles, Footprints, Leaf Specks, Acoustic Rings, Slashes, Floats)
       this._updateVisualFx(dt);
 
-      // 8. Compute Context Interaction Hint
-      this.interactHint = this._computeInteractHint();
+      // 9. Compute Diegetic Calligraphic Action Badge & HUD Prompt
+      this._computeInteractAndDiegeticBadge();
 
-      // 9. Procedural Audio Dynamic Tension Heartbeat
-      const isTense = this.inCombat || this.player.hp <= Math.ceil(this.player.maxHp * 0.3);
-      if (this.sound) this.sound.update(dt, isTense);
+      // 10. Dynamic Tension Audio Ducking (450Hz lowpass) & Accelerating Heartbeat
+      const isTense = this.inCombat || this.player.hp <= 3;
+      if (this.sound) this.sound.update(dt, isTense, nearestAlertDist);
 
-      // 10. Game Over Check
+      // 11. Game Over Check
       if (this.player.dead) {
         this._triggerEndgame(false);
+      }
+    }
+
+    _updateEnvironmentReactivity(dt, prevX, prevY) {
+      const p = this.player;
+      const obstacles = this.level.obstacles || [];
+
+      // Update obstacle rustle timers & check entity overlap with ferns/bamboo
+      for (let i = 0; i < obstacles.length; i++) {
+        const obs = obstacles[i];
+        if (typeof obs.update === 'function') obs.update(dt);
+        if (obs.type !== 'fern' && obs.type !== 'bamboo') continue;
+
+        const pad = obs.type === 'bamboo' ? 14 : 6;
+        // Player brushing foliage
+        if (
+          p.moving &&
+          p.centerX >= obs.x - pad &&
+          p.centerX <= obs.x + obs.width + pad &&
+          p.centerY >= obs.y &&
+          p.centerY <= obs.y + obs.height + pad
+        ) {
+          if (obs.triggerRustle(p.centerX - prevX || 1)) {
+            this._spawnLeafSpecks(p.centerX, p.centerY - 14, 3);
+            if (this.sound) this.sound.playLeafRustle();
+          }
+        }
+      }
+
+      // Wet Mud Footprints in Sector 1 (Riverbank) & Sector 3 (Infected Ravine)
+      const moved = Math.hypot(p.centerX - prevX, p.centerY - prevY);
+      const inMudZone = this.currentSectorId === 1 || this.currentSectorId === 3;
+      if (inMudZone && moved > 0.2) {
+        this.footprintDistAccum += moved;
+        if (this.footprintDistAccum >= 32) {
+          this.footprintDistAccum = 0;
+          this.footprintStepSide *= -1;
+          const moveAng = Math.atan2(p.centerY - prevY, p.centerX - prevX);
+          const perpX = -Math.sin(moveAng) * 5 * this.footprintStepSide;
+          const perpY = Math.cos(moveAng) * 5 * this.footprintStepSide;
+          this.footprints.push({
+            x: p.centerX + perpX,
+            y: p.y + p.height - 4 + perpY,
+            angle: moveAng,
+            age: 0,
+            duration: 4.5,
+            inspected: false
+          });
+        }
       }
     }
 
@@ -363,6 +624,7 @@
       p.parangAnimTimer = 0.36;
       if (p.animParang) p.animParang.reset();
       if (this.sound) this.sound.playParangSlash();
+      this._vibrate(15);
 
       this.slashEffects.push({
         x: p.centerX,
@@ -375,7 +637,6 @@
       });
 
       const reach = 78;
-      // Hit Mercenaries in 75px arc
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (m.dead) continue;
@@ -388,13 +649,19 @@
           m.takeDamage(dmg, { x: p.centerX, y: p.centerY }, {
             onMercKilled: (killed) => {
               this.stats.enemiesNeutralized++;
+              this._spawnInkPuddle(killed.centerX, killed.y + killed.height - 6, killed.role === 'commander' ? 40 : 30);
               if (isStealthTakedown) this.stats.stealthTakedowns++;
               if (killed.role === 'commander') {
                 p.inventory.hasKeycard = true;
               }
             }
           });
+
+          // AAA Hit-Stop + Directional Trauma + Haptics
+          this.triggerHitStop(45);
+          if (this.camera) this.camera.addTrauma(isStealthTakedown ? 0.58 : 0.34, dx, dy);
           if (isStealthTakedown) {
+            this._vibrate([25, 40, 25]);
             this.slashEffects[this.slashEffects.length - 1].isStealth = true;
             this._spawnFloat(m.centerX, m.y - 16, 'SILENT TAKEDOWN', '#F85A5A', true);
           } else {
@@ -403,13 +670,19 @@
         }
       }
 
-      // Hit Mutated Boars in 75px arc
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead) continue;
-        const dist = Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY);
-        if (dist <= reach + 10) {
-          const dmg = b.takeDamage(45, { x: p.centerX, y: p.centerY });
+        const dx = b.centerX - p.centerX;
+        const dy = b.centerY - p.centerY;
+        if (Math.hypot(dx, dy) <= reach + 10) {
+          const dmg = b.takeDamage(45, { x: p.centerX, y: p.centerY }, {
+            onBoarKilled: (killed) => {
+              this._spawnInkPuddle(killed.centerX, killed.y + killed.height - 6, 38);
+            }
+          });
+          this.triggerHitStop(45);
+          if (this.camera) this.camera.addTrauma(0.4, dx, dy);
           this._spawnFloat(b.centerX, b.y - 14, String(dmg), '#F85A5A', true);
         }
       }
@@ -420,7 +693,6 @@
       const Proj = this.ns.Projectile;
       if (!p || !Proj || p.attackCooldown > 0) return;
 
-      // Auto-pick best ranged weapon if Parang currently active
       let weapon = p.activeWeapon;
       if (weapon === 'parang') {
         if (p.unlockedWeapons.crossbow && p.ammo.crossbow > 0) weapon = 'crossbow';
@@ -440,6 +712,7 @@
         }
         p.ammo.crossbow--;
         p.attackCooldown = 0.55;
+        this._vibrate(15);
         if (this.sound) this.sound.playCrossbowTwang();
         this.projectiles.push(
           new Proj({
@@ -460,8 +733,9 @@
         }
         p.ammo.pistol--;
         p.attackCooldown = 0.34;
+        this._vibrate(20);
         if (this.sound) this.sound.playSuppressedShot();
-        if (this.camera) this.camera.addShake(3, 0.12);
+        if (this.camera) this.camera.addTrauma(0.24, -Math.cos(ang), -Math.sin(ang));
         this.projectiles.push(
           new Proj({
             type: 'pistol9mm',
@@ -474,7 +748,6 @@
             maxRange: 550
           })
         );
-        // Small 120px suppressed acoustic ring
         this._emitAcousticRing(p.centerX, p.centerY, 120, false);
       } else if (weapon === 'decoy') {
         if (p.ammo.decoy <= 0) {
@@ -508,7 +781,6 @@
         color: provokesBoars ? 'rgba(248, 90, 90, 0.65)' : 'rgba(17, 30, 51, 0.45)'
       });
 
-      // Alert/lure nearby mercenaries
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (!m.dead && Math.hypot(m.centerX - x, m.centerY - y) <= radius) {
@@ -516,16 +788,14 @@
         }
       }
 
-      // Provoke Mutated Boars! If mercenaries are near the ravine checkpoint, charge right down the ravine into them!
       if (provokesBoars) {
         for (let i = 0; i < this.boars.length; i++) {
           const b = this.boars[i];
           if (b.dead) continue;
           if (Math.hypot(b.centerX - x, b.centerY - y) <= radius + 140) {
-            // Pick closest mercenary within 460px to encourage natural faction infighting, else charge the clatter point
             let targetX = x;
             let targetY = y;
-            let bestDist = 460;
+            let bestDist = 520;
             for (let j = 0; j < this.mercenaries.length; j++) {
               const m = this.mercenaries[j];
               if (m.dead) continue;
@@ -551,7 +821,6 @@
       const p = this.player;
       if (!p || !this.level) return;
 
-      // 1. Priority: Silent Rear Stealth Takedown on nearby unalerted Mercenary
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (m.dead || m.state === 'ALERT') continue;
@@ -562,7 +831,6 @@
         }
       }
 
-      // 2. Harvest Boar Meat from slain Mutated Boar
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead && !b.meatHarvested && Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY) <= 85) {
@@ -574,12 +842,11 @@
         }
       }
 
-      // 3. Level Pickups & Interactive Objectives
       const items = this.level.interactables || [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (it.collected) continue;
-        if (Math.hypot(it.x - p.centerX, it.y - p.centerY) > 74) continue;
+        if (Math.hypot(it.x - p.centerX, it.y - p.centerY) > 75) continue;
 
         if (it.type === 'weapon_parang') {
           it.collected = true;
@@ -651,9 +918,8 @@
           this.level.blastGateOpening = true;
           this.level.blastGateTimer = 15.0;
           if (this.sound) this.sound.playAlarmKlaxon();
-          if (this.camera) this.camera.addShake(7, 0.5);
+          if (this.camera) this.camera.addTrauma(0.55, -1, 0);
           if (this.hud) this.hud.showToast('BLAST GATE OVERRIDE INITIATED — SURVIVE 15 SECONDS!', 4.0);
-          // Alert nearby Sector 4 guards
           for (let mIdx = 0; mIdx < this.mercenaries.length; mIdx++) {
             const m = this.mercenaries[mIdx];
             if (!m.dead && m.sector === 4) {
@@ -666,29 +932,41 @@
       }
     }
 
-    _computeInteractHint() {
+    _computeInteractAndDiegeticBadge() {
       const p = this.player;
-      if (!p || !this.level) return '';
+      this.interactHint = '';
+      this.diegeticBadge = null;
+      if (!p || !this.level) return;
+
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (!m.dead && m.state !== 'ALERT' && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 78 && m.isBehindMe(p.centerX, p.centerY)) {
-          return '[E / HAND] SILENT PARANG TAKEDOWN';
+          this.interactHint = '[E / TAP] SILENT TAKEDOWN';
+          this.diegeticBadge = { x: m.centerX, y: m.y, text: '[E / TAP] SILENT TAKEDOWN', urgent: true };
+          return;
         }
       }
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead && !b.meatHarvested && Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY) <= 85) {
-          return '[E / HAND] HARVEST BOAR MEAT';
+          this.interactHint = '[E / TAP] HARVEST BOAR MEAT';
+          this.diegeticBadge = { x: b.centerX, y: b.y, text: '[E / TAP] HARVEST BOAR MEAT', urgent: false };
+          return;
         }
       }
       const items = this.level.interactables || [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        if (!it.collected && Math.hypot(it.x - p.centerX, it.y - p.centerY) <= 74) {
-          return `[E / HAND] ${it.label.toUpperCase()}`;
+        if (!it.collected && Math.hypot(it.x - p.centerX, it.y - p.centerY) <= 75) {
+          let label = `[E / TAP] ${it.label.toUpperCase()}`;
+          if (it.type === 'generator') label = '[E / TAP] SABOTAGE GENERATOR';
+          else if (it.type === 'blast_terminal') label = '[E / TAP] SWIPE TIER-1 KEYCARD';
+          else if (it.type === 'culvert_unlock') label = '[E / TAP] UNLOCK CULVERT HATCH';
+          this.interactHint = label;
+          this.diegeticBadge = { x: it.x, y: it.y, text: label, urgent: !!it.highlight };
+          return;
         }
       }
-      return '';
     }
 
     _updateProjectiles(dt, aiEvents) {
@@ -718,7 +996,6 @@
         }
         if (pr.type === 'decoy_rock') continue;
 
-        // Player projectiles hit Mercenaries & Boars
         if (pr.faction === 'PLAYER') {
           let hit = false;
           for (let j = 0; j < this.mercenaries.length; j++) {
@@ -727,6 +1004,7 @@
             if (Math.hypot(pr.x - m.centerX, pr.y - (m.y + m.height * 0.5)) < 26) {
               const dealt = m.takeDamage(pr.damage, { x: this.player.centerX, y: this.player.centerY }, aiEvents);
               this._spawnFloat(m.centerX, m.y - 14, String(dealt), '#F85A5A', true);
+              if (m.dead) this.triggerHitStop(35);
               if (pr.retrievable) {
                 this.level.interactables.push({
                   id: `bolt_hit_${Date.now()}_${j}`,
@@ -756,11 +1034,11 @@
             }
           }
         } else if (pr.faction === 'MERC') {
-          // Mercenary bullets hit BOTH Player AND Mutated Boars (Faction Infighting)
           if (!this.player.dead && Math.hypot(pr.x - this.player.centerX, pr.y - (this.player.y + this.player.height * 0.5)) < 22) {
             const dealt = this.player.takeDamage(pr.damage);
             if (dealt > 0) {
-              if (this.camera) this.camera.addShake(6, 0.2);
+              this._vibrate([40, 60]);
+              if (this.camera) this.camera.addTrauma(0.55, pr.vx, pr.vy);
               this._spawnFloat(this.player.centerX, this.player.y - 12, `-${dealt} HP`, '#F85A5A', true);
             }
             pr.dead = true;
@@ -785,16 +1063,21 @@
     _updateSectorAndHazards(dt) {
       const p = this.player;
       const l = this.level;
-      // Active sector banner
       for (let i = 0; i < l.sectors.length; i++) {
         const s = l.sectors[i];
         if (p.centerX >= s.x && p.centerX < s.x + s.width) {
           this.currentSectorLabel = s.label;
+          if (s.id !== this.currentSectorId) {
+            this.currentSectorId = s.id;
+            if (s.id > this.highestSavedSector) {
+              this.highestSavedSector = s.id;
+              this._saveSectorCheckpoint(s.id, false);
+            }
+          }
           break;
         }
       }
 
-      // Toxic Rafflesia Spore Zones (Sector 3)
       let inSpore = false;
       for (let i = 0; i < l.sporeZones.length; i++) {
         const sp = l.sporeZones[i];
@@ -809,6 +1092,7 @@
           p.sporeTickTimer = 0;
           const dealt = p.takeDamage(1);
           if (dealt > 0) {
+            this._vibrate([40, 60]);
             this._spawnFloat(p.centerX, p.y - 12, 'BT-09 SPORE -1', '#F85A5A', false);
           }
         }
@@ -816,7 +1100,6 @@
         p.sporeTickTimer = 0;
       }
 
-      // Sector 4 Red Laser Tripwires
       for (let i = 0; i < l.tripwires.length; i++) {
         const lw = l.tripwires[i];
         if (!lw.active) continue;
@@ -826,6 +1109,7 @@
           p.centerY <= Math.max(lw.y1, lw.y2)
         ) {
           lw.active = false;
+          this._vibrate([30, 50]);
           if (this.sound) this.sound.playAlarmKlaxon();
           if (this.hud) this.hud.showToast('LASER TRIPWIRE TRIGGERED — SECTOR 4 ON ALERT!', 2.8);
           for (let mIdx = 0; mIdx < this.mercenaries.length; mIdx++) {
@@ -851,7 +1135,6 @@
         if (gateObs) {
           gateObs.openProgress = Math.min(1, 1 - l.blastGateTimer / 15.0);
         }
-        // Spawn 1 Ironclad responder midway through survival hold
         if (!l.reinforcementSpawned && l.blastGateTimer <= 9.0 && this.ns.Mercenary) {
           l.reinforcementSpawned = true;
           const resp = new this.ns.Mercenary({
@@ -876,7 +1159,6 @@
         }
       }
 
-      // Check Extraction Zone beyond open Blast Gate
       if (l.blastGateOpen && l.extractionZone) {
         const ez = l.extractionZone;
         if (p.centerX >= ez.x && p.centerX <= ez.x + ez.width && p.centerY >= ez.y && p.centerY <= ez.y + ez.height) {
@@ -886,6 +1168,31 @@
     }
 
     _updateVisualFx(dt) {
+      // Expanding permanent fountain-pen ink puddles (grow over 2.4s)
+      for (let i = 0; i < this.inkPuddles.length; i++) {
+        if (this.inkPuddles[i].age < this.inkPuddles[i].growDuration) {
+          this.inkPuddles[i].age += dt;
+        }
+      }
+      // Wet mud footprints (dissolve after 4.5s)
+      for (let i = this.footprints.length - 1; i >= 0; i--) {
+        this.footprints[i].age += dt;
+        if (this.footprints[i].age >= this.footprints[i].duration) {
+          this.footprints.splice(i, 1);
+        }
+      }
+      // Fluttering ink leaf specks
+      for (let i = this.leafParticles.length - 1; i >= 0; i--) {
+        const lf = this.leafParticles[i];
+        lf.age += dt;
+        lf.x += lf.vx * dt;
+        lf.y += lf.vy * dt;
+        lf.vy += 42 * dt; // gentle flutter gravity
+        lf.rot += lf.vrot * dt;
+        if (lf.age >= lf.duration) {
+          this.leafParticles.splice(i, 1);
+        }
+      }
       for (let i = this.acousticRings.length - 1; i >= 0; i--) {
         this.acousticRings[i].age += dt;
         if (this.acousticRings[i].age >= this.acousticRings[i].duration) {
@@ -928,13 +1235,19 @@
       const title = document.getElementById('endgame-title');
       const desc = document.getElementById('endgame-desc');
       const statsEl = document.getElementById('endgame-stats');
+      const btnRetry = document.getElementById('btn-retry-sector');
 
       if (stamp) stamp.textContent = victory ? 'OPERATION COMPLETE // ACT 1' : 'MIA // SIGNAL LOST';
       if (title) title.textContent = victory ? 'PERIMETER BLAST GATE BREACHED' : 'OPERATOR KANCIL DOWN';
       if (desc) {
         desc.textContent = victory
           ? 'Operator Kancil crossed the Temenggor Perimeter threshold into the surface warehouse complex above Facility Sub-Zero. Telemetry secured for Act 2.'
-          : 'Ironclad forces or BT-09 mutated fauna overwhelmed your position. Remember: stay hidden in dense ferns, behind hollow logs, and turn the wild boars against the mercenaries.';
+          : 'Ironclad forces or BT-09 mutated fauna overwhelmed your position. Stay low in dense ferns, bait boars into walls for a Matador stun, or retry from your last sector checkpoint.';
+      }
+      if (btnRetry) {
+        const hasCp = !victory && !!this._loadCheckpoint();
+        btnRetry.classList.toggle('hidden', !hasCp);
+        if (hasCp) btnRetry.textContent = `RETRY CURRENT SECTOR (SECTOR ${this.currentSectorId})`;
       }
       if (statsEl) {
         const mins = Math.floor(this.elapsedSec / 60);

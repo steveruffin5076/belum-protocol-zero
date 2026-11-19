@@ -66,9 +66,12 @@
         <div id="stealth-status-pill" class="stealth-pill">EXPOSED</div>
       </div>
 
-      <!-- TOP-CENTER SECTOR BANNER & ALERT / BLAST TIMER -->
+      <!-- TOP-CENTER SECTOR BANNER, AUDIO STATUS & ALERT / BLAST TIMER -->
       <div id="hud-top-center">
-        <div id="sector-banner" class="sector-banner">SECTOR 1 // SUNGAI BELUM RIVERBANK</div>
+        <div class="top-center-row">
+          <div id="sector-banner" class="sector-banner">SECTOR 1 // SUNGAI BELUM RIVERBANK</div>
+          <button id="btn-audio-status" class="audio-status-badge pulsing" title="Toggle / Unlock Audio">[TAP TO UNMUTE]</button>
+        </div>
         <div id="blast-timer-banner" class="blast-timer hidden">
           BLAST DOOR OPENING: <span id="blast-timer-sec">15.0</span>s — HOLD POSITION
         </div>
@@ -321,7 +324,8 @@
         <p id="endgame-desc"></p>
         <div id="endgame-stats" class="endgame-stats"></div>
         <div class="dossier-actions">
-          <button id="btn-restart-game" class="ink-btn primary">REPLAY ACT 1</button>
+          <button id="btn-retry-sector" class="ink-btn primary hidden">RETRY CURRENT SECTOR</button>
+          <button id="btn-restart-game" class="ink-btn secondary">RESTART FULL INFILTRATION</button>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-// src/input/input_manager.js - Unified Desktop (WASD/Mouse) + Mobile (D-Pad/Touch) Input Controller
+// src/input/input_manager.js - Unified Desktop + Multi-Touch Mobile Controller with Haptics & Audio Unlock
 (function (global) {
   'use strict';
 
@@ -23,6 +23,16 @@
       return { x: fallbackX !== undefined ? fallbackX : 1, y: fallbackY !== undefined ? fallbackY : 0 };
     }
     return { x: sx / mag, y: sy / mag };
+  }
+
+  function vibrate(pattern) {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(pattern);
+      }
+    } catch (_) {
+      // Ignore on unsupported browsers
+    }
   }
 
   class InputManager {
@@ -55,7 +65,7 @@
         weaponSelect: null
       };
 
-      // Virtual D-Pad drag state
+      // Virtual D-Pad multi-touch state
       this.dpadVector = { x: 0, y: 0 };
       this.dpadPointerId = null;
       this.dpadEl = null;
@@ -68,8 +78,15 @@
       }
     }
 
+    _notifyUserGesture() {
+      if (this.cb && typeof this.cb.onUserGesture === 'function') {
+        this.cb.onUserGesture();
+      }
+    }
+
     _bindKeyboard() {
       window.addEventListener('keydown', (e) => {
+        this._notifyUserGesture();
         const code = e.code;
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(code)) {
           e.preventDefault();
@@ -129,12 +146,15 @@
         this.mouseActive = true;
       });
 
-      this.canvas.addEventListener('mousedown', (e) => {
+      this.canvas.addEventListener('pointerdown', (e) => {
+        this._notifyUserGesture();
+        // Multi-touch guard: ignore if this pointer is already driving the D-Pad
+        if (this.dpadPointerId !== null && e.pointerId === this.dpadPointerId) return;
         const rect = this.canvas.getBoundingClientRect();
         this.mouseScreen.x = e.clientX - rect.left;
         this.mouseScreen.y = e.clientY - rect.top;
-        this.mouseActive = true;
-        if (e.button === 0) {
+        this.mouseActive = e.pointerType !== 'touch';
+        if (e.button === 0 || e.pointerType === 'touch') {
           this.actions.attackPrimary = true;
         } else if (e.button === 2) {
           this.aimHeld = true;
@@ -142,7 +162,7 @@
         }
       });
 
-      window.addEventListener('mouseup', (e) => {
+      window.addEventListener('pointerup', (e) => {
         if (e.button === 2) {
           this.aimHeld = false;
         }
@@ -174,12 +194,12 @@
           const ny = (dy / dist) * (clamped / maxR);
           this.dpadVector = normalizeVector(nx, ny);
           this._setKnobVisual((dx / dist) * clamped, (dy / dist) * clamped);
-          // Mobile auto-aim follows movement direction
           this.mouseActive = false;
           this.aimVector = normalizeUnit(nx, ny, this.aimVector.x, this.aimVector.y);
         };
 
         this.dpadEl.addEventListener('pointerdown', (e) => {
+          this._notifyUserGesture();
           if (e.target && e.target.closest && e.target.closest('#btn-sprint-center')) {
             return;
           }
@@ -207,31 +227,35 @@
         this.dpadEl.addEventListener('pointercancel', releaseDpad);
       }
 
-      const bindTap = (id, fn) => {
+      // Multi-touch isolated pointerdown bindings: right thumb taps never conflict with left thumb D-Pad
+      const bindMultiTouchTap = (id, fn) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.addEventListener('click', (e) => {
+        el.addEventListener('pointerdown', (e) => {
+          if (this.dpadPointerId !== null && e.pointerId === this.dpadPointerId) return;
+          e.preventDefault();
           e.stopPropagation();
+          this._notifyUserGesture();
           fn();
         });
       };
 
-      bindTap('btn-sprint-center', () => {
+      bindMultiTouchTap('btn-sprint-center', () => {
         this.touchSprintToggle = !this.touchSprintToggle;
       });
-      bindTap('btn-action-hand', () => {
+      bindMultiTouchTap('btn-action-hand', () => {
         this.actions.interact = true;
       });
-      bindTap('btn-action-crosshair', () => {
+      bindMultiTouchTap('btn-action-crosshair', () => {
         this.actions.attackRanged = true;
       });
-      bindTap('btn-action-reticle', () => {
+      bindMultiTouchTap('btn-action-reticle', () => {
         this.actions.meleeSlash = true;
       });
-      bindTap('btn-action-bag', () => {
+      bindMultiTouchTap('btn-action-bag', () => {
         this.actions.quickConsumable = true;
       });
-      bindTap('btn-action-crouch', () => {
+      bindMultiTouchTap('btn-action-crouch', () => {
         this.crouchToggle = !this.crouchToggle;
       });
     }
@@ -247,7 +271,6 @@
     }
 
     update(playerWorldPos, camera) {
-      // Combine Keyboard + Virtual D-Pad
       let kx = 0;
       let ky = 0;
       if (this.keys['KeyW'] || this.keys['ArrowUp']) ky -= 1;
@@ -261,7 +284,6 @@
 
       this.sprintHeld = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight'] || this.touchSprintToggle);
 
-      // Compute normalized aim vector
       if (this.mouseActive && playerWorldPos && camera) {
         const worldMouse = camera.screenToWorld(this.mouseScreen.x, this.mouseScreen.y);
         const dx = worldMouse.x - playerWorldPos.x;
@@ -271,7 +293,6 @@
         this.aimVector = normalizeUnit(this.moveVector.x, this.moveVector.y, this.aimVector.x, this.aimVector.y);
       }
 
-      // Final NaN guard
       if (!Number.isFinite(this.moveVector.x) || !Number.isFinite(this.moveVector.y)) {
         this.moveVector = { x: 0, y: 0 };
       }
@@ -296,6 +317,7 @@
 
   InputManager.normalizeVector = normalizeVector;
   InputManager.normalizeUnit = normalizeUnit;
+  InputManager.vibrate = vibrate;
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = InputManager;

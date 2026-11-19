@@ -1,5 +1,6 @@
-// src/engine/renderer.js - 2.5D Oblique Dip-Pen Ink Canvas Renderer with Y-Sorting & Red Telegraphs
-// Palette strictly enforces Prussian Blue Ink (#111E33) on Aged Cream Paper (#F7F3E8) + Crimson (#F85A5A)
+// src/engine/renderer.js - AAA 2.5D Oblique Dip-Pen Ink Canvas Renderer
+// Features: Y-Sorting, Ink-Bleed Death Puddles, Mud Footprints, Dynamic Zoom, Blueprint Fog-of-War, Leaf Specks & Diegetic Calligraphy Badges
+// Strictly Prussian Blue Ink (#111E33) on Aged Cream Paper (#F7F3E8) + Crimson (#F85A5A). ZERO pure RGB black.
 (function (global) {
   'use strict';
 
@@ -74,9 +75,6 @@
       this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     }
 
-    /**
-     * Core Y-Sorting helper matching Section 7.2 specification
-     */
     static sortByDepth(entitiesList) {
       return entitiesList.sort((a, b) => {
         const ay = (a.sortY !== undefined ? a.sortY : (a.y + (a.height || 0)));
@@ -91,14 +89,14 @@
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
       this.time += safeDt;
 
-      const cam = state.camera ? state.camera.getRenderOffset() : { x: 0, y: 0 };
+      const cam = state.camera ? state.camera.getRenderOffset() : { x: 0, y: 0, zoom: 1 };
+      const zoom = Number.isFinite(cam.zoom) ? cam.zoom : 1;
 
       // 1. Aged Cream Parchment Base
       ctx.save();
       ctx.fillStyle = PALETTE.paperBase;
       ctx.fillRect(0, 0, this.width, this.height);
 
-      // Subtle paper tooth pattern
       if (this.paperPattern) {
         ctx.save();
         ctx.globalAlpha = 0.32;
@@ -110,23 +108,30 @@
         this._drawProceduralPaperGrain(ctx, cam);
       }
 
-      // World-space transform
+      // World-space transform with AAA Spring Camera Dynamic Zoom
       ctx.save();
-      ctx.translate(-cam.x, -cam.y);
+      ctx.translate(this.width * 0.5, this.height * 0.5);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-this.width * 0.5 - cam.x, -this.height * 0.5 - cam.y);
 
       // 2. Ground Sectors, Riverbank Water, Paths, Floorboards & Concrete
       if (state.level) {
         this._drawTerrain(ctx, state.level, cam);
       }
 
-      // 3. Ground Layer Effects: Spores, Floodlights, Vision Cones, Telegraphs, Acoustic Rings, Laser Tripwires
+      // 3. Persistent Ground Stains & Environmental Traces:
+      //    Wet Mud Footprints -> Organic Fountain-Pen Ink-Bleed Death Puddles
+      this._drawFootprints(ctx, state);
+      this._drawInkPuddles(ctx, state);
+
+      // 4. Ground Layer Effects: Spores, Floodlights, Vision Cones, Telegraphs, Acoustic Rings, Tripwires
       this._drawGroundZones(ctx, state);
       this._drawVisionConesAndLasers(ctx, state);
       this._drawTelegraphs(ctx, state);
       this._drawAcousticRings(ctx, state);
       this._drawPickupsAndInteractables(ctx, state);
 
-      // 4. 2.5D Y-SORTING DEPTH PASS (Obstacles, Ferns, Logs, Player, Mercenaries, Boars, Projectiles)
+      // 5. 2.5D Y-SORTING DEPTH PASS
       const drawables = [];
       if (state.level && Array.isArray(state.level.obstacles)) {
         for (let i = 0; i < state.level.obstacles.length; i++) {
@@ -136,23 +141,15 @@
           }
         }
       }
-      if (state.player) {
-        drawables.push(state.player);
-      }
+      if (state.player) drawables.push(state.player);
       if (Array.isArray(state.mercenaries)) {
-        for (let i = 0; i < state.mercenaries.length; i++) {
-          drawables.push(state.mercenaries[i]);
-        }
+        for (let i = 0; i < state.mercenaries.length; i++) drawables.push(state.mercenaries[i]);
       }
       if (Array.isArray(state.boars)) {
-        for (let i = 0; i < state.boars.length; i++) {
-          drawables.push(state.boars[i]);
-        }
+        for (let i = 0; i < state.boars.length; i++) drawables.push(state.boars[i]);
       }
       if (Array.isArray(state.projectiles)) {
-        for (let i = 0; i < state.projectiles.length; i++) {
-          drawables.push(state.projectiles[i]);
-        }
+        for (let i = 0; i < state.projectiles.length; i++) drawables.push(state.projectiles[i]);
       }
 
       Renderer25D.sortByDepth(drawables);
@@ -163,13 +160,18 @@
         }
       }
 
-      // 5. Melee Slash Arcs & Floating Crimson Damage Numbers / Alert Marks
+      // 6. Dynamic Blueprint Fog-of-War Hatching behind concrete bunker walls
+      this._drawBlueprintFogOfWar(ctx, state);
+
+      // 7. Fluttering Ink Leaf Specks, Slash Arcs, Diegetic Calligraphic Badges & Floating Damage Numbers
+      this._drawLeafParticles(ctx, state);
       this._drawSlashEffects(ctx, state);
+      this._drawDiegeticBadge(ctx, state);
       this._drawFloatingTexts(ctx, state);
 
       ctx.restore(); // End world-space
 
-      // 6. Screen-space Tropical Rain & Low-Health Crimson Pulse
+      // 8. Screen-space Tropical Rain & Low-Health Crimson Pulse
       this._drawRainOverlay(ctx, safeDt);
       if (state.player && state.player.hp > 0 && state.player.hp <= Math.ceil(state.player.maxHp * 0.3)) {
         const pulse = 0.08 + 0.08 * Math.sin(this.time * 7);
@@ -187,7 +189,7 @@
     }
 
     _isVisible(x, y, w, h, cam) {
-      const margin = 180;
+      const margin = 240;
       return (
         x + w >= cam.x - margin &&
         x <= cam.x + this.width + margin &&
@@ -218,8 +220,195 @@
       ctx.restore();
     }
 
+    /**
+     * AAA Organic "Fountain Pen Ink-Bleed" Death Puddles (#111E33)
+     * 3 overlapping feathered organic ellipses expanding smoothly into parchment grain over 2.4 seconds
+     */
+    _drawInkPuddles(ctx, state) {
+      const puddles = state.inkPuddles || [];
+      for (let i = 0; i < puddles.length; i++) {
+        const p = puddles[i];
+        const t = Math.min(1, p.age / (p.growDuration || 2.4));
+        // Smooth ease-out bleed curve
+        const ease = 1 - Math.pow(1 - t, 3);
+        const lobes = p.lobes || [];
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+
+        // Soft outer paper-seepage halo
+        const haloR = (p.baseRadius || 32) * (0.45 + 0.72 * ease);
+        const grad = ctx.createRadialGradient(0, 0, haloR * 0.2, 0, 0, haloR * 1.25);
+        grad.addColorStop(0, 'rgba(17, 30, 51, 0.42)');
+        grad.addColorStop(0.68, 'rgba(28, 40, 68, 0.24)');
+        grad.addColorStop(1, 'rgba(17, 30, 51, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, haloR * 1.25, haloR * 0.85, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 3 overlapping organic Prussian Blue ink ellipses
+        for (let l = 0; l < lobes.length; l++) {
+          const lobe = lobes[l];
+          const rx = lobe.rx * (0.25 + 0.75 * ease);
+          const ry = lobe.ry * (0.25 + 0.75 * ease);
+          const ox = lobe.ox * ease;
+          const oy = lobe.oy * ease;
+          ctx.fillStyle = l === 0 ? 'rgba(17, 30, 51, 0.62)' : 'rgba(28, 40, 68, 0.45)';
+          ctx.beginPath();
+          ctx.ellipse(ox, oy, rx, ry, lobe.rot, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Wet Mud Footprints (persist 4.5s along Sungai Belum Riverbank & Infected Ravine)
+     */
+    _drawFootprints(ctx, state) {
+      const prints = state.footprints || [];
+      for (let i = 0; i < prints.length; i++) {
+        const fp = prints[i];
+        const alpha = Math.max(0, 1 - fp.age / fp.duration) * 0.42;
+        ctx.save();
+        ctx.translate(fp.x, fp.y);
+        ctx.rotate(fp.angle || 0);
+        ctx.fillStyle = `rgba(17, 30, 51, ${alpha.toFixed(3)})`;
+        // Sole + heel boot print
+        ctx.beginPath();
+        ctx.ellipse(3, 0, 5.2, 2.7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(-4, 0, 2.6, 2.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Fluttering Ink Leaf Specks spawned when brushing through ferns & bamboo
+     */
+    _drawLeafParticles(ctx, state) {
+      const leaves = state.leafParticles || [];
+      for (let i = 0; i < leaves.length; i++) {
+        const lf = leaves[i];
+        const alpha = Math.max(0, 1 - lf.age / lf.duration);
+        ctx.save();
+        ctx.translate(lf.x, lf.y);
+        ctx.rotate(lf.rot);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#2E4062';
+        ctx.strokeStyle = '#111E33';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 5, 2.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Dynamic Fog-of-War Blueprint Hatching
+     * Diagonal Prussian blue blueprint hatching over occluded bunker interior / unseen extraction bay
+     */
+    _drawBlueprintFogOfWar(ctx, state) {
+      if (!state.level || !state.player) return;
+      const p = state.player;
+      const zones = [
+        // Sector 4 interior behind Blast Gate (reveals as gate opens or player enters culvert/gate)
+        {
+          x: 3915,
+          y: 265,
+          w: 270,
+          h: 820,
+          revealed: state.level.blastGateOpen || p.centerX > 3820
+        },
+        // Sector 2 Barracks interior shadow hatch until player approaches closely
+        {
+          x: 1140,
+          y: 210,
+          w: 280,
+          h: 150,
+          revealed: Math.hypot(p.centerX - 1280, p.centerY - 360) < 190
+        },
+        // Sector 2 Field Lab shadow hatch until player approaches
+        {
+          x: 1580,
+          y: 195,
+          w: 250,
+          h: 150,
+          revealed: Math.hypot(p.centerX - 1705, p.centerY - 350) < 190
+        }
+      ];
+
+      for (let z = 0; z < zones.length; z++) {
+        const fz = zones[z];
+        if (fz.revealed) continue;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(fz.x, fz.y, fz.w, fz.h);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(28, 40, 68, 0.14)';
+        ctx.fillRect(fz.x, fz.y, fz.w, fz.h);
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.28)';
+        ctx.lineWidth = 1.2;
+        const step = 14;
+        for (let d = -fz.h; d < fz.w + fz.h; d += step) {
+          ctx.beginPath();
+          ctx.moveTo(fz.x + d, fz.y);
+          ctx.lineTo(fz.x + d - fz.h, fz.y + fz.h);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Diegetic Calligraphy Action Badge floating directly above nearby interactable / takedown target (75px)
+     */
+    _drawDiegeticBadge(ctx, state) {
+      const badge = state.diegeticBadge;
+      if (!badge || !badge.text) return;
+
+      const bob = Math.sin(this.time * 5.2) * 3;
+      const bx = badge.x;
+      const by = badge.y - (badge.urgent ? 64 : 44) + bob;
+
+      ctx.save();
+      ctx.font = 'bold 11px "Courier New", monospace';
+      const tw = ctx.measureText(badge.text).width;
+      const padX = 10;
+      const w = tw + padX * 2;
+      const h = 24;
+
+      // Calligraphic parchment ribbon
+      ctx.fillStyle = badge.urgent ? '#111E33' : '#F7F3E8';
+      ctx.strokeStyle = badge.urgent ? '#F85A5A' : '#111E33';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(bx - w * 0.5, by - h * 0.5, w, h, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      // Pointer nib beneath badge
+      ctx.beginPath();
+      ctx.moveTo(bx - 5, by + h * 0.5);
+      ctx.lineTo(bx, by + h * 0.5 + 6);
+      ctx.lineTo(bx + 5, by + h * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = badge.urgent ? '#F7F3E8' : '#111E33';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badge.text, bx, by + 0.5);
+      ctx.restore();
+    }
+
     _drawTerrain(ctx, level, cam) {
-      // Sector bands & ink-hatched environmental flooring
       const sectors = level.sectors || [];
       for (let i = 0; i < sectors.length; i++) {
         const s = sectors[i];
@@ -229,21 +418,18 @@
         ctx.fillStyle = s.groundTint || PALETTE.paperWarm;
         ctx.fillRect(s.x, s.y, s.width, s.height);
 
-        // Sector ink divider etching
         ctx.strokeStyle = 'rgba(17, 30, 51, 0.18)';
         ctx.setLineDash([8, 6]);
         ctx.lineWidth = 1.5;
         ctx.strokeRect(s.x, s.y, s.width, s.height);
         ctx.setLineDash([]);
 
-        // Engraved map watermark
         ctx.fillStyle = 'rgba(17, 30, 51, 0.14)';
         ctx.font = 'bold 14px "Courier New", monospace';
         ctx.fillText(s.label || '', s.x + 24, s.y + 34);
         ctx.restore();
       }
 
-      // Riverbank water current on left edge (Sungai Belum)
       if (level.riverZone) {
         const rz = level.riverZone;
         if (this._isVisible(rz.x, rz.y, rz.width, rz.height, cam)) {
@@ -259,7 +445,6 @@
             ctx.quadraticCurveTo(rz.x + rz.width * 0.5 + wave, y + 8, rz.x + rz.width - 12, y - 3);
             ctx.stroke();
           }
-          // Muddy shoreline hatch
           ctx.strokeStyle = PALETTE.inkMid;
           ctx.lineWidth = 2.5;
           ctx.beginPath();
@@ -270,7 +455,6 @@
         }
       }
 
-      // Dirt trail & Sector pathways
       if (Array.isArray(level.paths)) {
         ctx.save();
         for (let i = 0; i < level.paths.length; i++) {
@@ -286,7 +470,6 @@
         ctx.restore();
       }
 
-      // Culvert flooded drainage channel (Sector 4 Stealth Option A)
       if (level.culvertZone) {
         const cz = level.culvertZone;
         ctx.save();
@@ -301,7 +484,6 @@
         ctx.restore();
       }
 
-      // Extraction threshold zone beyond Blast Gate
       if (level.extractionZone) {
         const ez = level.extractionZone;
         ctx.save();
@@ -326,7 +508,6 @@
     _drawGroundZones(ctx, state) {
       if (!state.level) return;
 
-      // Toxic Rafflesia Spore Zones (Soft radial crimson haze)
       const spores = state.level.sporeZones || [];
       for (let i = 0; i < spores.length; i++) {
         const sp = spores[i];
@@ -342,7 +523,6 @@
         ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
         ctx.fill();
 
-        // Ink Rafflesia flower petals in center
         ctx.strokeStyle = PALETTE.inkDeep;
         ctx.fillStyle = 'rgba(248, 90, 90, 0.65)';
         ctx.lineWidth = 1.6;
@@ -360,7 +540,6 @@
         ctx.restore();
       }
 
-      // Floodlights (Sector 2 & 4 - disabled if generator sabotaged)
       const lights = state.level.floodlights || [];
       for (let i = 0; i < lights.length; i++) {
         const fl = lights[i];
@@ -383,7 +562,6 @@
         ctx.restore();
       }
 
-      // Red Laser Tripwires (Sector 4)
       const lasers = state.level.tripwires || [];
       for (let i = 0; i < lasers.length; i++) {
         const lw = lasers[i];
@@ -435,7 +613,6 @@
         ctx.lineWidth = 1.2;
         ctx.stroke();
 
-        // Thin crimson rifle laser sight
         const laserLen = m.state === 'ALERT' ? range * 1.15 : range * 0.72;
         ctx.strokeStyle = m.state === 'ALERT' ? 'rgba(255, 32, 48, 0.85)' : 'rgba(248, 90, 90, 0.55)';
         ctx.lineWidth = m.state === 'ALERT' ? 1.8 : 1.1;
@@ -447,9 +624,6 @@
       }
     }
 
-    /**
-     * Soft radial crimson telegraph matching Section 2.1 & 7.4 (feathered edge #F85A5A)
-     */
     _drawTelegraphs(ctx, state) {
       const boars = state.boars || [];
       for (let i = 0; i < boars.length; i++) {
@@ -463,7 +637,6 @@
           const radius = 26 + (maxRadius - 26) * progress;
 
           ctx.save();
-          // Feathered radial crimson aura
           const grad = ctx.createRadialGradient(cx, cy, radius * 0.12, cx, cy, radius);
           grad.addColorStop(0, 'rgba(248, 90, 90, 0.52)');
           grad.addColorStop(0.6, 'rgba(248, 90, 90, 0.30)');
@@ -473,14 +646,12 @@
           ctx.ellipse(cx, cy, radius, radius * 0.72, 0, 0, Math.PI * 2);
           ctx.fill();
 
-          // Expanding outer crimson warning ring
           ctx.strokeStyle = 'rgba(248, 90, 90, 0.82)';
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.ellipse(cx, cy, radius * 0.92, radius * 0.66, 0, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Charge lane preview vector during telegraph
           if (b.state === 'TELEGRAPH') {
             ctx.strokeStyle = 'rgba(248, 90, 90, 0.55)';
             ctx.lineWidth = 3;
@@ -525,13 +696,11 @@
         ctx.save();
         ctx.translate(it.x, it.y + bob);
 
-        // Ink shadow
         ctx.fillStyle = 'rgba(17, 30, 51, 0.16)';
         ctx.beginPath();
         ctx.ellipse(0, 12 - bob, 16, 7, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Hand-drawn parchment tag / crate icon
         ctx.fillStyle = it.highlight ? '#FFE3E3' : PALETTE.paperWarm;
         ctx.strokeStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
         ctx.lineWidth = 2;
@@ -545,7 +714,6 @@
         ctx.textAlign = 'center';
         ctx.fillText(it.badge || 'ITEM', 0, 2);
 
-        // Label below
         ctx.fillStyle = PALETTE.inkMid;
         ctx.font = 'bold 10px "Courier New", monospace';
         ctx.fillText(it.label || '', 0, -20);
@@ -588,7 +756,6 @@
         ctx.globalAlpha = alpha;
         ctx.font = ft.bold ? '900 22px "Georgia", serif' : 'bold 14px "Courier New", monospace';
         ctx.textAlign = 'center';
-        // Parchment halo outline so numbers pop cleanly
         ctx.lineWidth = 4;
         ctx.strokeStyle = PALETTE.paperBase;
         ctx.strokeText(ft.text, ft.x, ft.y);

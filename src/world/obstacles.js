@@ -48,12 +48,31 @@
       this.unlocked = false;
       this.openProgress = 0; // For blast_gate sliding open (0..1)
 
+      // Foliage Rustle & Plant Physics (±6px shear at 8Hz damped over 0.4s)
+      this.rustleTimer = 0;
+      this.rustleDuration = 0.4;
+      this.rustleDir = 1;
+
       // Link isolated sliced environment PNGs
       if (this.type === 'hollow_log') this.spriteEntry = loadPropSprite('assets/environment/hollow_log.png');
       else if (this.type === 'fern') this.spriteEntry = loadPropSprite('assets/environment/fern_clump.png');
       else if (this.type === 'bamboo') this.spriteEntry = loadPropSprite('assets/environment/bamboo_cluster.png');
       else if (this.type === 'blast_gate') this.spriteEntry = loadPropSprite('assets/environment/gate_blast_door.png');
       else this.spriteEntry = null;
+    }
+
+    triggerRustle(dir) {
+      if (this.type !== 'fern' && this.type !== 'bamboo') return false;
+      if (this.rustleTimer > 0.24) return false;
+      this.rustleTimer = this.rustleDuration;
+      this.rustleDir = dir ? Math.sign(dir) : 1;
+      return true;
+    }
+
+    update(dt) {
+      if (this.rustleTimer > 0) {
+        this.rustleTimer = Math.max(0, this.rustleTimer - (dt || 0.016));
+      }
     }
 
     get sortY() {
@@ -77,6 +96,18 @@
         this._drawCulvertGrate(ctx);
         ctx.restore();
         return;
+      }
+
+      // Apply AAA Foliage Rustle shear (±6px oscillation at 8Hz damped over 0.4s)
+      if (this.rustleTimer > 0 && (this.type === 'fern' || this.type === 'bamboo')) {
+        const elapsed = this.rustleDuration - this.rustleTimer;
+        const damping = this.rustleTimer / this.rustleDuration;
+        const swayPx = Math.sin(elapsed * Math.PI * 2 * 8) * 6 * damping * this.rustleDir;
+        const pivotX = this.x + this.width * 0.5;
+        const pivotY = this.y + this.height;
+        ctx.translate(pivotX, pivotY);
+        ctx.transform(1, 0, swayPx / Math.max(40, this.height), 1, 0, 0);
+        ctx.translate(-pivotX, -pivotY);
       }
 
       // Draw generated hand-inked PNG prop if ready

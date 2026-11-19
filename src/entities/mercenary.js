@@ -1,4 +1,4 @@
-// src/entities/mercenary.js - Ironclad Tactical Solutions PMC Guard & Commander Ward AI
+// src/entities/mercenary.js - Ironclad PMC AI with Gradual 0.85s Ink-Eye Suspicion Meter, 4.2 rad/s Turn Inertia & Footprint Investigation
 (function (global) {
   'use strict';
 
@@ -54,11 +54,20 @@
       this.dead = false;
       this.sector = cfg.sector || 1;
 
-      // Vision & Patrol
+      // Vision, Turn Inertia (4.2 rad/s max angular speed) & Gradual Suspicion Meter
       this.fovDeg = this.role === 'spotter' ? 75 : 65;
       this.visionRange = this.role === 'spotter' ? 320 : 270;
       this.facingAngle = Number.isFinite(cfg.facingAngle) ? cfg.facingAngle : Math.PI;
+      this.targetFacingAngle = this.facingAngle;
+      this.maxTurnSpeed = 4.2; // rad/s (240 deg/s) — eliminates instant 180 snaps
       this.facingRight = Math.cos(this.facingAngle) >= 0;
+
+      // AAA Gradual Suspicion Meter (0.0 -> 1.0 over 0.85s)
+      this.suspicionMeter = 0.0;
+      this.suspicionFillTime = 0.85;
+      this.sweepBaseAngle = this.facingAngle;
+      this.sweepPhase = 0;
+      this.lastFootprintCheck = 0;
 
       this.waypoints = Array.isArray(cfg.waypoints) && cfg.waypoints.length
         ? cfg.waypoints
@@ -100,6 +109,18 @@
       return this.y + this.height;
     }
 
+    _rotateToward(desiredAngle, dt) {
+      this.targetFacingAngle = desiredAngle;
+      const diff = normalizeAngle(desiredAngle - this.facingAngle);
+      const maxStep = this.maxTurnSpeed * dt;
+      if (Math.abs(diff) <= maxStep) {
+        this.facingAngle = desiredAngle;
+      } else {
+        this.facingAngle = normalizeAngle(this.facingAngle + Math.sign(diff) * maxStep);
+      }
+      this.facingRight = Math.cos(this.facingAngle) >= 0;
+    }
+
     isBehindMe(px, py) {
       const toPlayerAngle = Math.atan2(py - this.centerY, px - this.centerX);
       const diff = Math.abs(normalizeAngle(toPlayerAngle - this.facingAngle));
@@ -110,15 +131,30 @@
       if (this.dead) return;
       if (this.state === 'ALERT' && !priority) return;
       this.state = 'SUSPICIOUS';
+      this.suspicionMeter = Math.max(this.suspicionMeter, 0.45);
       this.suspicionTarget = { x: sx, y: sy };
       this.suspicionTimer = 5.5;
       this.alertMarkTimer = 1.6;
+      this.sweepBaseAngle = Math.atan2(sy - this.centerY, sx - this.centerX);
+    }
+
+    inspectFootprint(fx, fy, trackAngle) {
+      if (this.dead || this.state === 'ALERT') return;
+      this.suspicionMeter = Math.min(0.95, this.suspicionMeter + 0.2);
+      this.state = 'SUSPICIOUS';
+      this.suspicionTarget = {
+        x: fx + Math.cos(trackAngle || 0) * 65,
+        y: fy + Math.sin(trackAngle || 0) * 65
+      };
+      this.suspicionTimer = Math.max(this.suspicionTimer, 4.0);
+      this.sweepBaseAngle = Number.isFinite(trackAngle) ? trackAngle : Math.atan2(fy - this.centerY, fx - this.centerX);
     }
 
     triggerAlert(tx, ty, ctxEvents) {
       if (this.dead) return;
       const wasAlert = this.state === 'ALERT';
       this.state = 'ALERT';
+      this.suspicionMeter = 1.0;
       this.suspicionTarget = { x: tx, y: ty };
       this.alertMemoryTimer = 6.5;
       this.alertMarkTimer = 2.0;
@@ -135,6 +171,7 @@
       if (this.hp <= 0) {
         this.dead = true;
         this.state = 'DEAD';
+        this.suspicionMeter = 0;
         if (ctxEvents && ctxEvents.onMercKilled) {
           ctxEvents.onMercKilled(this);
         }
@@ -146,7 +183,6 @@
 
     _canSeeTarget(tx, ty, isConcealed, obstacles) {
       if (isConcealed) {
-        // Section 7.2: 100% invisible unless physically colliding
         const dist = Math.hypot(tx - this.centerX, ty - this.centerY);
         return dist < 24;
       }
@@ -172,7 +208,7 @@
       let activeTarget = null;
       let targetDist = Infinity;
 
-      // 1. Check Faction Infighting: scan hostile/nearby Mutated Boars (FAUNA)
+      // 1. Faction Infighting: scan hostile/nearby Mutated Boars (FAUNA)
       if (Array.isArray(boars)) {
         for (let i = 0; i < boars.length; i++) {
           const b = boars[i];
@@ -187,16 +223,44 @@
         }
       }
 
-      // 2. Check Player visibility (respects fern/log concealment)
+      // 2. Gradual Player Detection (0.85s Inking Eye Suspicion Meter)
+      let seesPlayer = false;
       if (player && !player.dead) {
-        const seesPlayer = this._canSeeTarget(player.centerX, player.centerY, player.isConcealed, obstacles);
+        seesPlayer = this._canSeeTarget(player.centerX, player.centerY, player.isConcealed, obstacles);
         const distP = Math.hypot(player.centerX - this.centerX, player.centerY - this.centerY);
-        // Sprinting loudly right next to guard triggers suspicion
-        if (seesPlayer && distP < targetDist) {
-          activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
-          targetDist = distP;
-        } else if (player.sprinting && distP < 130 && this.state === 'PATROL') {
-          this.hearSound(player.centerX, player.centerY, false);
+
+        if (seesPlayer) {
+          if (this.state === 'ALERT') {
+            if (distP < targetDist) {
+              activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
+              targetDist = distP;
+            }
+          } else {
+            // Fill suspicion gradually over 0.85s (faster if very close)
+            const fillDuration = distP < 90 ? 0.38 : this.suspicionFillTime;
+            this.suspicionMeter = Math.min(1.0, this.suspicionMeter + safeDt / fillDuration);
+            this.suspicionTarget = { x: player.centerX, y: player.centerY };
+            this.suspicionTimer = 4.8;
+            this.sweepBaseAngle = Math.atan2(player.centerY - this.centerY, player.centerX - this.centerX);
+
+            if (this.suspicionMeter >= 1.0) {
+              this.triggerAlert(player.centerX, player.centerY, ctxEvents);
+              if (distP < targetDist) {
+                activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
+                targetDist = distP;
+              }
+            } else {
+              this.state = 'SUSPICIOUS';
+            }
+          }
+        } else {
+          // Decay suspicion gently when player dives into ferns or behind hollow log
+          if (this.state !== 'ALERT' && this.suspicionMeter > 0) {
+            this.suspicionMeter = Math.max(0, this.suspicionMeter - safeDt * 0.24);
+          }
+          if (player.sprinting && distP < 130 && this.state === 'PATROL') {
+            this.hearSound(player.centerX, player.centerY, false);
+          }
         }
       }
 
@@ -204,30 +268,32 @@
 
       if (activeTarget) {
         this.triggerAlert(activeTarget.x, activeTarget.y, ctxEvents);
-        this.facingAngle = Math.atan2(activeTarget.y - this.centerY, activeTarget.x - this.centerX);
-        this.facingRight = Math.cos(this.facingAngle) >= 0;
+        const desiredAngle = Math.atan2(activeTarget.y - this.centerY, activeTarget.x - this.centerX);
+        this._rotateToward(desiredAngle, safeDt);
 
-        // Maintain tactical firing distance or engage with 3-round bursts
         if (targetDist > 210) {
           isMoving = this._moveToward(activeTarget.x, activeTarget.y, this.alertSpeed, safeDt, level);
         }
 
-        // Fire 3-round burst
-        if (this.burstRemaining > 0) {
-          this.burstIntervalTimer -= safeDt;
-          if (this.burstIntervalTimer <= 0) {
-            this.burstRemaining--;
-            this.burstIntervalTimer = 0.13;
-            this.firingAnimTimer = 0.22;
-            if (ctxEvents && ctxEvents.onMercFire) {
-              const spread = (Math.random() - 0.5) * 0.08;
-              ctxEvents.onMercFire(this, this.facingAngle + spread, this.bulletDamage);
+        // Only fire when laser sight is reasonably aligned with target (respects turn inertia!)
+        const aimErr = Math.abs(normalizeAngle(desiredAngle - this.facingAngle));
+        if (aimErr < 0.35) {
+          if (this.burstRemaining > 0) {
+            this.burstIntervalTimer -= safeDt;
+            if (this.burstIntervalTimer <= 0) {
+              this.burstRemaining--;
+              this.burstIntervalTimer = 0.13;
+              this.firingAnimTimer = 0.22;
+              if (ctxEvents && ctxEvents.onMercFire) {
+                const spread = (Math.random() - 0.5) * 0.08;
+                ctxEvents.onMercFire(this, this.facingAngle + spread, this.bulletDamage);
+              }
             }
+          } else if (this.fireCooldown <= 0) {
+            this.burstRemaining = this.role === 'commander' ? 2 : 3;
+            this.burstIntervalTimer = 0;
+            this.fireCooldown = this.role === 'commander' ? 1.15 : 1.55;
           }
-        } else if (this.fireCooldown <= 0) {
-          this.burstRemaining = this.role === 'commander' ? 2 : 3;
-          this.burstIntervalTimer = 0;
-          this.fireCooldown = this.role === 'commander' ? 1.15 : 1.55;
         }
       } else if (this.state === 'ALERT') {
         this.alertMemoryTimer -= safeDt;
@@ -236,26 +302,36 @@
           if (dist > 28) {
             isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.alertSpeed, safeDt, level);
           } else {
-            this.facingAngle += 1.4 * safeDt;
+            this.sweepPhase += safeDt * 2.2;
+            this._rotateToward(this.sweepBaseAngle + Math.sin(this.sweepPhase) * 0.78, safeDt);
           }
         }
         if (this.alertMemoryTimer <= 0) {
-          this.state = 'PATROL';
+          this.state = 'SUSPICIOUS';
+          this.suspicionMeter = 0.55;
+          this.suspicionTimer = 3.0;
         }
       } else if (this.state === 'SUSPICIOUS') {
         this.suspicionTimer -= safeDt;
         if (this.suspicionTarget) {
           const dist = Math.hypot(this.suspicionTarget.x - this.centerX, this.suspicionTarget.y - this.centerY);
-          if (dist > 34) {
-            isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.patrolSpeed * 1.15, safeDt, level);
+          if (seesPlayer) {
+            // Pause & track movement while eye meter fills
+            const lookAng = Math.atan2(this.suspicionTarget.y - this.centerY, this.suspicionTarget.x - this.centerX);
+            this._rotateToward(lookAng, safeDt);
+          } else if (dist > 34) {
+            isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.patrolSpeed * 1.12, safeDt, level);
           } else {
-            // Look around cautiously
-            this.facingAngle += Math.sin(this.suspicionTimer * 2.5) * 1.1 * safeDt;
+            // 45-degree laser sweep inspection before returning to patrol
+            this.sweepPhase += safeDt * 2.4;
+            const sweepOffset = Math.sin(this.sweepPhase) * (Math.PI * 0.25); // +/- 45 deg
+            this._rotateToward(this.sweepBaseAngle + sweepOffset, safeDt);
           }
         }
-        if (this.suspicionTimer <= 0) {
+        if (this.suspicionTimer <= 0 && !seesPlayer) {
           this.state = 'PATROL';
           this.suspicionTarget = null;
+          this.suspicionMeter = 0;
         }
       } else {
         // PATROL state
@@ -275,9 +351,6 @@
         }
       }
 
-      this.facingRight = Math.cos(this.facingAngle) >= 0;
-
-      // Update 8-frame animations
       if (this.firingAnimTimer > 0 && this.animFire) {
         this.animFire.update(safeDt, true);
       } else if (this.animPatrol) {
@@ -292,7 +365,7 @@
       if (dist < 2) return false;
       const vx = (dx / dist) * speed;
       const vy = (dy / dist) * speed;
-      this.facingAngle = Math.atan2(dy, dx);
+      this._rotateToward(Math.atan2(dy, dx), dt);
 
       const nx = this.x + vx * dt;
       if (!this._hitsSolid(nx, this.y, level)) this.x = nx;
@@ -323,14 +396,49 @@
       return false;
     }
 
+    _drawInkSuspicionEye(ctx) {
+      const cx = this.centerX;
+      const cy = this.y - 24;
+      const fill = Math.max(0, Math.min(1, this.suspicionMeter));
+
+      ctx.save();
+      // Hand-drawn parchment eye silhouette
+      ctx.beginPath();
+      ctx.moveTo(cx - 14, cy);
+      ctx.quadraticCurveTo(cx, cy - 11, cx + 14, cy);
+      ctx.quadraticCurveTo(cx, cy + 11, cx - 14, cy);
+      ctx.closePath();
+      ctx.fillStyle = '#F7F3E8';
+      ctx.fill();
+
+      // Clip interior & fill upward with Prussian Blue -> Crimson ink as suspicion rises
+      ctx.save();
+      ctx.clip();
+      const fillH = 22 * fill;
+      ctx.fillStyle = fill > 0.72 ? '#F85A5A' : '#111E33';
+      ctx.fillRect(cx - 15, cy + 11 - fillH, 30, fillH);
+      // Pupil ring
+      ctx.strokeStyle = fill > 0.5 ? '#F7F3E8' : '#111E33';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Outer dip-pen ink rim
+      ctx.strokeStyle = fill > 0.72 ? '#C9323B' : '#111E33';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.restore();
+    }
+
     draw(ctx) {
       if (!ctx) return;
       ctx.save();
       if (this.dead) {
-        ctx.globalAlpha = 0.32;
+        ctx.globalAlpha = 0.34;
       }
 
-      // Ground ink shadow
       ctx.fillStyle = 'rgba(17, 30, 51, 0.22)';
       ctx.beginPath();
       ctx.ellipse(this.centerX, this.y + this.height - 4, 21, 8, 0, 0, Math.PI * 2);
@@ -343,7 +451,6 @@
 
       let drawn = false;
       if (this.dead) {
-        // Ink silhouette marker for neutralized guard
         ctx.strokeStyle = '#111E33';
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -393,12 +500,16 @@
         }
       }
 
-      // Crimson alert "!" or "?" mark
-      if (!this.dead && (this.state === 'ALERT' || this.state === 'SUSPICIOUS')) {
-        ctx.fillStyle = this.state === 'ALERT' ? '#F85A5A' : '#C9323B';
-        ctx.font = '900 22px "Georgia", serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(this.state === 'ALERT' ? '!' : '?', this.centerX, this.y - 18);
+      // AAA Gradual Ink-Eye Suspicion Indicator OR Alert "!"
+      if (!this.dead) {
+        if (this.state === 'ALERT') {
+          ctx.fillStyle = '#F85A5A';
+          ctx.font = '900 22px "Georgia", serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('!', this.centerX, this.y - 20);
+        } else if (this.suspicionMeter > 0.04) {
+          this._drawInkSuspicionEye(ctx);
+        }
       }
 
       if (this.hurtFlashTimer > 0) {

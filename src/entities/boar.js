@@ -1,4 +1,4 @@
-// src/entities/boar.js - Mutated Babi Hutan (Wild Boar) AI with 1.2s Soft Radial Red Telegraph & Faction Infighting
+// src/entities/boar.js - Mutated Babi Hutan AI with 1.2s Red Telegraph, Faction Infighting & 2.6s Matador Wall-Stun Concussion
 (function (global) {
   'use strict';
 
@@ -11,8 +11,8 @@
       const cfg = opts || {};
       this.id = cfg.id || `boar_${Math.random().toString(36).slice(2, 7)}`;
       this.faction = 'FAUNA';
-      this.x = Number.isFinite(cfg.x) ? cfg.x : 2200;
-      this.y = Number.isFinite(cfg.y) ? cfg.y : 640;
+      this.x = Number.isFinite(cfg.x) ? cfg.x : 2480;
+      this.y = Number.isFinite(cfg.y) ? cfg.y : 525;
       this.homeX = this.x;
       this.homeY = this.y;
       this.width = 64;
@@ -23,19 +23,23 @@
       this.dead = false;
       this.meatHarvested = false;
 
-      // Section 7.4: 1.2s soft radial red telegraph circle (#F85A5A), charge dealing 60-78 damage
-      this.state = 'GRAZE'; // 'GRAZE' | 'AGITATED' | 'TELEGRAPH' | 'CHARGE' | 'RECOIL' | 'DEAD'
+      // State Machine: 'GRAZE' | 'AGITATED' | 'TELEGRAPH' | 'CHARGE' | 'RECOIL' | 'STUNNED' | 'DEAD'
+      this.state = 'GRAZE';
       this.telegraphDuration = 1.2;
       this.telegraphTimer = 0;
       this.telegraphRadius = 96;
-      this.chargeDuration = 0.72;
+      this.chargeDuration = 0.78;
       this.chargeTimer = 0;
       this.chargeSpeed = 420;
       this.chargeDirX = 1;
       this.chargeDirY = 0;
-      this.chargeDamage = 78; // Massive damage matching reference "78" crimson damage number
-      this.playerChargeDamage = 4; // Scaled against player's 11 HP pool (hardcore 2-3 hits kill)
+      this.chargeDamage = 78;
+      this.playerChargeDamage = 4;
       this.hitSet = new Set();
+
+      // AAA Matador Wall-Crash Concussion (2.6s stun with 3 orbiting ink stars)
+      this.stunDuration = 2.6;
+      this.stunTimer = 0;
 
       this.recoilTimer = 0;
       this.grazeTimer = 1.5;
@@ -44,7 +48,6 @@
       this.hurtFlashTimer = 0;
       this.provokedTarget = null;
 
-      // 8-frame animators
       this.animIdle = Animator ? new Animator({ fps: 8, framePrefix: 'boar_idle' }) : null;
       this.animCharge = Animator ? new Animator({ fps: 12, framePrefix: 'boar_charge' }) : null;
     }
@@ -62,7 +65,7 @@
     }
 
     provokeToward(tx, ty, ctxEvents) {
-      if (this.dead) return;
+      if (this.dead || this.state === 'STUNNED') return;
       this.provokedTarget = { x: tx, y: ty };
       if (this.state === 'GRAZE' || this.state === 'AGITATED') {
         this._beginTelegraph(tx, ty, ctxEvents);
@@ -71,7 +74,9 @@
 
     takeDamage(amount, attackerPos, ctxEvents) {
       if (this.dead) return 0;
-      const dmg = Math.max(1, Math.round(amount || 1));
+      // Bonus vulnerability during STUNNED concussion window
+      const mult = this.state === 'STUNNED' ? 1.35 : 1.0;
+      const dmg = Math.max(1, Math.round((amount || 1) * mult));
       this.hp = Math.max(0, this.hp - dmg);
       this.hurtFlashTimer = 0.22;
       if (this.hp <= 0) {
@@ -106,6 +111,16 @@
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
       if (this.hurtFlashTimer > 0) this.hurtFlashTimer = Math.max(0, this.hurtFlashTimer - safeDt);
 
+      // Handle STUNNED concussion state (2.6s)
+      if (this.state === 'STUNNED') {
+        this.stunTimer -= safeDt;
+        if (this.animIdle) this.animIdle.update(safeDt * 0.35, true);
+        if (this.stunTimer <= 0) {
+          this.state = 'GRAZE';
+        }
+        return;
+      }
+
       // Find nearest valid target (Mercenaries OR non-concealed Player)
       let nearest = null;
       let nearestDist = 275;
@@ -138,7 +153,6 @@
             this.grazeTimer = 1.6 + Math.random() * 1.6;
             const ang = Math.random() * Math.PI * 2;
             this.grazeDir = { x: Math.cos(ang), y: Math.sin(ang) };
-            // Stay near home territory
             if (Math.hypot(this.x - this.homeX, this.y - this.homeY) > 130) {
               const hx = this.homeX - this.x;
               const hy = this.homeY - this.y;
@@ -168,23 +182,26 @@
         this.chargeTimer -= safeDt;
         const nx = this.x + this.chargeDirX * this.chargeSpeed * safeDt;
         const ny = this.y + this.chargeDirY * this.chargeSpeed * safeDt;
-        let hitWall = false;
-        if (!this._hitsSolid(nx, this.y, level)) {
-          this.x = nx;
-        } else {
-          hitWall = true;
-        }
-        if (!this._hitsSolid(this.x, ny, level)) {
-          this.y = ny;
-        } else {
-          hitWall = true;
-        }
+        const hitObsX = this._hitsSolid(nx, this.y, level);
+        const hitObsY = this._hitsSolid(this.x, ny, level);
+        if (!hitObsX) this.x = nx;
+        if (!hitObsY) this.y = ny;
 
-        // Faction Infighting & Gore Collisions (hits BOTH Mercenaries and Player!)
+        const collidedObs = hitObsX || hitObsY;
+
         this._checkChargeImpacts(player, mercenaries, ctxEvents);
 
         if (this.animCharge) this.animCharge.update(safeDt * 1.4, true);
-        if (this.chargeTimer <= 0 || hitWall) {
+
+        if (collidedObs) {
+          // AAA Matador Wall-Crash Concussion!
+          this.state = 'STUNNED';
+          this.stunTimer = this.stunDuration;
+          this.provokedTarget = null;
+          if (ctxEvents && ctxEvents.onBoarWallStun) {
+            ctxEvents.onBoarWallStun(this, collidedObs);
+          }
+        } else if (this.chargeTimer <= 0) {
           this.state = 'RECOIL';
           this.recoilTimer = 0.85;
           this.provokedTarget = null;
@@ -205,7 +222,6 @@
     _checkChargeImpacts(player, mercenaries, ctxEvents) {
       const impactR = 46;
 
-      // Gore Mercenaries (Faction Infighting: FAUNA vs MERC)
       if (Array.isArray(mercenaries)) {
         for (let i = 0; i < mercenaries.length; i++) {
           const m = mercenaries[i];
@@ -216,28 +232,27 @@
               this.hitSet.add(m.id);
               const dealt = m.takeDamage(this.chargeDamage, { x: this.centerX, y: this.centerY }, ctxEvents);
               if (ctxEvents && ctxEvents.onBoarImpact) {
-                ctxEvents.onBoarImpact(m, dealt, '78');
+                ctxEvents.onBoarImpact(m, dealt, '78', this);
               }
             }
           }
         }
       }
 
-      // Gore Player
       if (player && !player.dead && !this.hitSet.has('PLAYER')) {
         const distP = Math.hypot(player.centerX - this.centerX, player.centerY - this.centerY);
         if (distP < impactR) {
           this.hitSet.add('PLAYER');
           const dealt = player.takeDamage(this.playerChargeDamage);
           if (dealt > 0 && ctxEvents && ctxEvents.onBoarImpact) {
-            ctxEvents.onBoarImpact(player, dealt, `-${dealt} HP`);
+            ctxEvents.onBoarImpact(player, dealt, `-${dealt} HP`, this);
           }
         }
       }
     }
 
     _hitsSolid(testX, testY, level) {
-      if (!level || !Array.isArray(level.obstacles)) return false;
+      if (!level || !Array.isArray(level.obstacles)) return null;
       const cx = testX + this.width * 0.5;
       const cy = testY + this.height * 0.72;
       const r = 20;
@@ -252,20 +267,64 @@
         const clX = Math.max(bx, Math.min(cx, bx + bw));
         const clY = Math.max(by, Math.min(cy, by + bh));
         if ((cx - clX) * (cx - clX) + (cy - clY) * (cy - clY) < r * r) {
-          return true;
+          return obs;
         }
       }
-      return false;
+      return null;
     }
 
-    draw(ctx) {
+    _drawStunStars(ctx, time) {
+      const cx = this.centerX;
+      const cy = this.y - 8;
+      const t = (time || 0) * 4.8;
+      ctx.save();
+      // Orbit ring
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.35)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 22, 8, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 3 orbiting hand-drawn ink stars
+      for (let s = 0; s < 3; s++) {
+        const ang = t + (s * Math.PI * 2) / 3;
+        const sx = cx + Math.cos(ang) * 22;
+        const sy = cy + Math.sin(ang) * 8;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(ang);
+        ctx.fillStyle = s === 0 ? '#F85A5A' : '#F7F3E8';
+        ctx.strokeStyle = '#111E33';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let p = 0; p < 5; p++) {
+          const outerA = (p * Math.PI * 2) / 5 - Math.PI * 0.5;
+          const innerA = outerA + Math.PI / 5;
+          const ox = Math.cos(outerA) * 6;
+          const oy = Math.sin(outerA) * 6;
+          const ix = Math.cos(innerA) * 2.5;
+          const iy = Math.sin(innerA) * 2.5;
+          if (p === 0) ctx.moveTo(ox, oy);
+          else ctx.lineTo(ox, oy);
+          ctx.lineTo(ix, iy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    draw(ctx, time) {
       if (!ctx) return;
       ctx.save();
       if (this.dead) {
         ctx.globalAlpha = 0.4;
       }
 
-      // Ground ink shadow
       ctx.fillStyle = 'rgba(17, 30, 51, 0.22)';
       ctx.beginPath();
       ctx.ellipse(this.centerX, this.y + this.height - 4, 28, 10, 0, 0, Math.PI * 2);
@@ -294,7 +353,10 @@
         ctx.stroke();
       }
 
-      // HP bar when damaged
+      if (!this.dead && this.state === 'STUNNED') {
+        this._drawStunStars(ctx, time);
+      }
+
       if (!this.dead && this.hp < this.maxHp) {
         const bw = 48;
         const bx = this.centerX - bw * 0.5;
@@ -306,14 +368,6 @@
         ctx.fillStyle = '#F85A5A';
         ctx.fillRect(bx, by, bw * Math.max(0, this.hp / this.maxHp), 6);
         ctx.strokeRect(bx, by, bw, 6);
-      }
-
-      if (this.dead && !this.meatHarvested) {
-        ctx.globalAlpha = 0.95;
-        ctx.fillStyle = '#111E33';
-        ctx.font = 'bold 10px "Courier New", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('[E] HARVEST BOAR MEAT', this.centerX, this.y - 6);
       }
 
       if (this.hurtFlashTimer > 0) {

@@ -1,4 +1,4 @@
-// src/audio/sound_engine.js - Zero-Asset Procedural Web Audio Synthesizer (Rain, Cicadas, Weapons, Radio, Heartbeat)
+// src/audio/sound_engine.js - Zero-Asset Procedural Web Audio Synthesizer with Dynamic Low-Pass Ducking & Autoplay Unlock
 (function (global) {
   'use strict';
 
@@ -6,11 +6,13 @@
     constructor() {
       this.ctx = null;
       this.masterGain = null;
+      this.ambientDuckFilter = null;
       this.muted = false;
       this.ambientRunning = false;
       this.heartbeatTimer = 0;
       this.thunderTimer = 14;
       this.noiseBuffer = null;
+      this.lastRustleTime = 0;
     }
 
     init() {
@@ -26,8 +28,15 @@
       try {
         this.ctx = new AudioCtx();
         this.masterGain = this.ctx.createGain();
-        this.masterGain.gain.value = this.muted ? 0 : 0.42;
+        this.masterGain.gain.value = this.muted ? 0 : 0.44;
         this.masterGain.connect(this.ctx.destination);
+
+        // AAA Tension Ducking Filter for ambient rain & cicadas (normal 14kHz -> 450Hz during ALERT/low HP)
+        this.ambientDuckFilter = this.ctx.createBiquadFilter();
+        this.ambientDuckFilter.type = 'lowpass';
+        this.ambientDuckFilter.frequency.value = 14000;
+        this.ambientDuckFilter.connect(this.masterGain);
+
         this.noiseBuffer = this._createPinkNoiseBuffer(2.5);
         if (this.ctx.state === 'suspended') {
           this.ctx.resume().catch(() => {});
@@ -38,10 +47,30 @@
       }
     }
 
+    unlock() {
+      const ok = this.init();
+      if (ok && this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+      if (ok && !this.ambientRunning) {
+        this.startAmbience();
+      }
+      return ok;
+    }
+
+    isActive() {
+      return !!(this.ctx && this.ctx.state === 'running' && !this.muted);
+    }
+
+    getStatusLabel() {
+      return this.isActive() ? '[AUDIO: ACTIVE]' : '[TAP TO UNMUTE]';
+    }
+
     toggleMute() {
+      this.unlock();
       this.muted = !this.muted;
       if (this.masterGain && this.ctx) {
-        this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 0.42, this.ctx.currentTime, 0.04);
+        this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 0.44, this.ctx.currentTime, 0.04);
       }
       return this.muted;
     }
@@ -69,6 +98,7 @@
     startAmbience() {
       if (!this.init() || this.ambientRunning) return;
       this.ambientRunning = true;
+      const dest = this.ambientDuckFilter || this.masterGain;
 
       // 1. Tropical Rain: Filtered pink noise with dynamic lowpass modulation
       const rainSrc = this.ctx.createBufferSource();
@@ -91,7 +121,7 @@
 
       rainSrc.connect(rainFilter);
       rainFilter.connect(rainGain);
-      rainGain.connect(this.masterGain);
+      rainGain.connect(dest);
       rainSrc.start();
       rainLfo.start();
 
@@ -117,14 +147,20 @@
 
       cicadaCarrier.connect(cicadaBand);
       cicadaBand.connect(cicadaGain);
-      cicadaGain.connect(this.masterGain);
+      cicadaGain.connect(dest);
       cicadaCarrier.start();
       cicadaMod.start();
     }
 
-    update(dt, isTense) {
+    update(dt, isTense, nearestThreatDist) {
       if (!this.ctx || this.muted || !this.ambientRunning) return;
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
+
+      // Dynamic Audio Ducking: muffle ambient rain & cicadas to 450Hz during ALERT or HP <= 3
+      if (this.ambientDuckFilter) {
+        const targetCutoff = isTense ? 450 : 14000;
+        this.ambientDuckFilter.frequency.setTargetAtTime(targetCutoff, this.ctx.currentTime, 0.25);
+      }
 
       // Occasional distant tropical thunder
       this.thunderTimer -= safeDt;
@@ -133,12 +169,15 @@
         this.playThunder(0.32);
       }
 
-      // Tension Heartbeat: 55 Hz sub-bass sine wave when detected or HP < 30%
+      // Accelerating 55 Hz Tension Heartbeat as guards close in
       if (isTense) {
+        const dist = Number.isFinite(nearestThreatDist) ? nearestThreatDist : 400;
+        const urgency = Math.max(0, Math.min(1, 1 - dist / 480));
+        const interval = 0.82 - urgency * 0.38; // 0.82s down to 0.44s
         this.heartbeatTimer -= safeDt;
         if (this.heartbeatTimer <= 0) {
-          this.heartbeatTimer = 0.78;
-          this.playHeartbeat();
+          this.heartbeatTimer = interval;
+          this.playHeartbeat(0.28 + urgency * 0.16);
         }
       } else {
         this.heartbeatTimer = 0;
@@ -177,10 +216,32 @@
       osc.stop(now + 0.025);
     }
 
+    playLeafRustle() {
+      if (!this.ctx || this.ctx.state !== 'running' || this.muted || !this.noiseBuffer) return;
+      const now = this.ctx.currentTime;
+      if (now - this.lastRustleTime < 0.24) return;
+      this.lastRustleTime = now;
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.setValueAtTime(2200 + Math.random() * 600, now);
+      filt.Q.value = 1.6;
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.24, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+      src.connect(filt);
+      filt.connect(gain);
+      gain.connect(this.masterGain);
+      src.start(now);
+      src.stop(now + 0.2);
+    }
+
     playParangSlash() {
       if (!this.init() || this.muted) return;
       const now = this.ctx.currentTime;
-      // Pitch-bent triangle wave
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
@@ -193,7 +254,6 @@
       osc.start(now);
       osc.stop(now + 0.16);
 
-      // Filtered white noise air whoosh
       if (this.noiseBuffer) {
         const src = this.ctx.createBufferSource();
         src.buffer = this.noiseBuffer;
@@ -217,7 +277,6 @@
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
-      // Section 9: Exponential frequency sweep 880 Hz -> 140 Hz
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.exponentialRampToValueAtTime(140, now + 0.16);
       gain.gain.setValueAtTime(0.32, now);
@@ -231,7 +290,6 @@
     playSuppressedShot() {
       if (!this.init() || this.muted) return;
       const now = this.ctx.currentTime;
-      // Section 9: Low-passed 240 Hz thump + snappy mechanical click
       const osc = this.ctx.createOscillator();
       const filt = this.ctx.createBiquadFilter();
       const gain = this.ctx.createGain();
@@ -248,7 +306,6 @@
       osc.start(now);
       osc.stop(now + 0.11);
 
-      // Mechanical slide click
       const click = this.ctx.createOscillator();
       const cg = this.ctx.createGain();
       click.type = 'square';
@@ -284,7 +341,6 @@
     playRadioAlert() {
       if (!this.init() || this.muted) return;
       const now = this.ctx.currentTime;
-      // Section 9: Dual square-wave chirp (1100 Hz / 1650 Hz) + white noise static burst
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'square';
@@ -316,6 +372,39 @@
       gain.connect(this.masterGain);
       osc.start(now);
       osc.stop(now + 0.36);
+    }
+
+    playBoarImpact() {
+      if (!this.init() || this.muted) return;
+      const now = this.ctx.currentTime;
+      // Heavy wooden/concrete concussion thud
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(125, now);
+      osc.frequency.exponentialRampToValueAtTime(34, now + 0.28);
+      gain.gain.setValueAtTime(0.58, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now);
+      osc.stop(now + 0.34);
+
+      if (this.noiseBuffer) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const filt = this.ctx.createBiquadFilter();
+        filt.type = 'lowpass';
+        filt.frequency.value = 520;
+        const ng = this.ctx.createGain();
+        ng.gain.setValueAtTime(0.45, now);
+        ng.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+        src.connect(filt);
+        filt.connect(ng);
+        ng.connect(this.masterGain);
+        src.start(now);
+        src.stop(now + 0.24);
+      }
     }
 
     playDecoyClatter() {
@@ -351,16 +440,16 @@
       osc.stop(now + 0.44);
     }
 
-    playHeartbeat() {
+    playHeartbeat(vol) {
       if (!this.ctx || this.muted) return;
       const now = this.ctx.currentTime;
-      // Section 9: 55 Hz sub-bass sine wave double thump
-      [0, 0.16].forEach((delay, i) => {
+      const baseVol = vol || 0.35;
+      [0, 0.15].forEach((delay, i) => {
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(55, now + delay);
-        gain.gain.setValueAtTime(i === 0 ? 0.35 : 0.24, now + delay);
+        gain.gain.setValueAtTime(i === 0 ? baseVol : baseVol * 0.68, now + delay);
         gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.14);
         osc.connect(gain);
         gain.connect(this.masterGain);

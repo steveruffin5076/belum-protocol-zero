@@ -21,6 +21,7 @@
       this.dayTimeTextEl = document.getElementById('day-time-text');
       this.stealthPillEl = document.getElementById('stealth-status-pill');
       this.sectorBannerEl = document.getElementById('sector-banner');
+      this.btnAudioStatus = document.getElementById('btn-audio-status');
       this.blastTimerBannerEl = document.getElementById('blast-timer-banner');
       this.blastTimerSecEl = document.getElementById('blast-timer-sec');
       this.toastEl = document.getElementById('hud-toast');
@@ -82,6 +83,11 @@
       if (this.btnGoHome) {
         this.btnGoHome.addEventListener('click', () => {
           if (this.cb.onOpenCamp) this.cb.onOpenCamp();
+        });
+      }
+      if (this.btnAudioStatus) {
+        this.btnAudioStatus.addEventListener('click', () => {
+          if (this.cb.onAudioBadgeClick) this.cb.onAudioBadgeClick();
         });
       }
 
@@ -256,9 +262,14 @@
         }
       }
 
-      // Active sector banner
+      // Active sector banner & persistent audio badge
       if (this.sectorBannerEl && state.currentSectorLabel) {
         this.sectorBannerEl.textContent = state.currentSectorLabel;
+      }
+      if (this.btnAudioStatus && state.audioStatusLabel) {
+        this.btnAudioStatus.textContent = state.audioStatusLabel;
+        this.btnAudioStatus.classList.toggle('active', !!state.audioActive);
+        this.btnAudioStatus.classList.toggle('pulsing', !state.audioActive);
       }
 
       // Blast door 15-second survival countdown

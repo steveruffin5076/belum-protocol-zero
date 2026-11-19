@@ -86,8 +86,12 @@
         this.overlay.classList.add('hidden');
       }
       if (this.sound) {
-        this.sound.init();
-        this.sound.startAmbience();
+        if (typeof this.sound.unlock === 'function') {
+          this.sound.unlock();
+        } else {
+          this.sound.init();
+          this.sound.startAmbience();
+        }
         this.sound.playThunder(0.55);
       }
       if (typeof this.onBeginOperation === 'function') {

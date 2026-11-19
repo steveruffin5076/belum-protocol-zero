@@ -219,6 +219,13 @@ html, body {
   pointer-events: none;
 }
 
+.top-center-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
 .sector-banner {
   background: rgba(247, 243, 232, 0.9);
   border: 2px solid var(--ink-deep);
@@ -230,6 +237,38 @@ html, body {
   letter-spacing: 1.4px;
   color: var(--ink-deep);
   box-shadow: 2px 2px 0 rgba(17, 30, 51, 0.22);
+}
+
+.audio-status-badge {
+  background: var(--paper-light);
+  color: var(--ink-deep);
+  border: 2px solid var(--ink-deep);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(17, 30, 51, 0.22);
+}
+
+.audio-status-badge.active {
+  background: #E8F1E9;
+  color: #1F5135;
+  border-color: #2B6244;
+}
+
+.audio-status-badge.pulsing {
+  background: #FDECEC;
+  color: var(--crimson-deep);
+  border-color: var(--crimson-deep);
+  animation: audioPulse 1.6s ease-in-out infinite;
+}
+
+@keyframes audioPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.72; transform: scale(1.03); }
 }
 
 .blast-timer {
@@ -575,6 +614,14 @@ html, body {
   box-shadow: 2px 3px 0 rgba(17, 30, 51, 0.3);
   transition: transform 0.08s ease, background-color 0.12s ease;
   touch-action: manipulation;
+}
+
+/* +20% invisible mobile touch tolerance (~66px+ effective tap target) */
+.action-btn::after {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
 }
 
 .action-btn:active {
@@ -968,9 +1015,12 @@ html, body {
         <div id="stealth-status-pill" class="stealth-pill">EXPOSED</div>
       </div>
 
-      <!-- TOP-CENTER SECTOR BANNER & ALERT / BLAST TIMER -->
+      <!-- TOP-CENTER SECTOR BANNER, AUDIO STATUS & ALERT / BLAST TIMER -->
       <div id="hud-top-center">
-        <div id="sector-banner" class="sector-banner">SECTOR 1 // SUNGAI BELUM RIVERBANK</div>
+        <div class="top-center-row">
+          <div id="sector-banner" class="sector-banner">SECTOR 1 // SUNGAI BELUM RIVERBANK</div>
+          <button id="btn-audio-status" class="audio-status-badge pulsing" title="Toggle / Unlock Audio">[TAP TO UNMUTE]</button>
+        </div>
         <div id="blast-timer-banner" class="blast-timer hidden">
           BLAST DOOR OPENING: <span id="blast-timer-sec">15.0</span>s — HOLD POSITION
         </div>
@@ -1223,7 +1273,8 @@ html, body {
         <p id="endgame-desc"></p>
         <div id="endgame-stats" class="endgame-stats"></div>
         <div class="dossier-actions">
-          <button id="btn-restart-game" class="ink-btn primary">REPLAY ACT 1</button>
+          <button id="btn-retry-sector" class="ink-btn primary hidden">RETRY CURRENT SECTOR</button>
+          <button id="btn-restart-game" class="ink-btn secondary">RESTART FULL INFILTRATION</button>
         </div>
       </div>
     </div>
@@ -1240,7 +1291,7 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/audio/sound_engine.js === */
-// src/audio/sound_engine.js - Zero-Asset Procedural Web Audio Synthesizer (Rain, Cicadas, Weapons, Radio, Heartbeat)
+// src/audio/sound_engine.js - Zero-Asset Procedural Web Audio Synthesizer with Dynamic Low-Pass Ducking & Autoplay Unlock
 (function (global) {
   'use strict';
 
@@ -1248,11 +1299,13 @@ window.__resolveBelumAsset = function(p) {
     constructor() {
       this.ctx = null;
       this.masterGain = null;
+      this.ambientDuckFilter = null;
       this.muted = false;
       this.ambientRunning = false;
       this.heartbeatTimer = 0;
       this.thunderTimer = 14;
       this.noiseBuffer = null;
+      this.lastRustleTime = 0;
     }
 
     init() {
@@ -1268,8 +1321,15 @@ window.__resolveBelumAsset = function(p) {
       try {
         this.ctx = new AudioCtx();
         this.masterGain = this.ctx.createGain();
-        this.masterGain.gain.value = this.muted ? 0 : 0.42;
+        this.masterGain.gain.value = this.muted ? 0 : 0.44;
         this.masterGain.connect(this.ctx.destination);
+
+        // AAA Tension Ducking Filter for ambient rain & cicadas (normal 14kHz -> 450Hz during ALERT/low HP)
+        this.ambientDuckFilter = this.ctx.createBiquadFilter();
+        this.ambientDuckFilter.type = 'lowpass';
+        this.ambientDuckFilter.frequency.value = 14000;
+        this.ambientDuckFilter.connect(this.masterGain);
+
         this.noiseBuffer = this._createPinkNoiseBuffer(2.5);
         if (this.ctx.state === 'suspended') {
           this.ctx.resume().catch(() => {});
@@ -1280,10 +1340,30 @@ window.__resolveBelumAsset = function(p) {
       }
     }
 
+    unlock() {
+      const ok = this.init();
+      if (ok && this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+      if (ok && !this.ambientRunning) {
+        this.startAmbience();
+      }
+      return ok;
+    }
+
+    isActive() {
+      return !!(this.ctx && this.ctx.state === 'running' && !this.muted);
+    }
+
+    getStatusLabel() {
+      return this.isActive() ? '[AUDIO: ACTIVE]' : '[TAP TO UNMUTE]';
+    }
+
     toggleMute() {
+      this.unlock();
       this.muted = !this.muted;
       if (this.masterGain && this.ctx) {
-        this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 0.42, this.ctx.currentTime, 0.04);
+        this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 0.44, this.ctx.currentTime, 0.04);
       }
       return this.muted;
     }
@@ -1311,6 +1391,7 @@ window.__resolveBelumAsset = function(p) {
     startAmbience() {
       if (!this.init() || this.ambientRunning) return;
       this.ambientRunning = true;
+      const dest = this.ambientDuckFilter || this.masterGain;
 
       // 1. Tropical Rain: Filtered pink noise with dynamic lowpass modulation
       const rainSrc = this.ctx.createBufferSource();
@@ -1333,7 +1414,7 @@ window.__resolveBelumAsset = function(p) {
 
       rainSrc.connect(rainFilter);
       rainFilter.connect(rainGain);
-      rainGain.connect(this.masterGain);
+      rainGain.connect(dest);
       rainSrc.start();
       rainLfo.start();
 
@@ -1359,14 +1440,20 @@ window.__resolveBelumAsset = function(p) {
 
       cicadaCarrier.connect(cicadaBand);
       cicadaBand.connect(cicadaGain);
-      cicadaGain.connect(this.masterGain);
+      cicadaGain.connect(dest);
       cicadaCarrier.start();
       cicadaMod.start();
     }
 
-    update(dt, isTense) {
+    update(dt, isTense, nearestThreatDist) {
       if (!this.ctx || this.muted || !this.ambientRunning) return;
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
+
+      // Dynamic Audio Ducking: muffle ambient rain & cicadas to 450Hz during ALERT or HP <= 3
+      if (this.ambientDuckFilter) {
+        const targetCutoff = isTense ? 450 : 14000;
+        this.ambientDuckFilter.frequency.setTargetAtTime(targetCutoff, this.ctx.currentTime, 0.25);
+      }
 
       // Occasional distant tropical thunder
       this.thunderTimer -= safeDt;
@@ -1375,12 +1462,15 @@ window.__resolveBelumAsset = function(p) {
         this.playThunder(0.32);
       }
 
-      // Tension Heartbeat: 55 Hz sub-bass sine wave when detected or HP < 30%
+      // Accelerating 55 Hz Tension Heartbeat as guards close in
       if (isTense) {
+        const dist = Number.isFinite(nearestThreatDist) ? nearestThreatDist : 400;
+        const urgency = Math.max(0, Math.min(1, 1 - dist / 480));
+        const interval = 0.82 - urgency * 0.38; // 0.82s down to 0.44s
         this.heartbeatTimer -= safeDt;
         if (this.heartbeatTimer <= 0) {
-          this.heartbeatTimer = 0.78;
-          this.playHeartbeat();
+          this.heartbeatTimer = interval;
+          this.playHeartbeat(0.28 + urgency * 0.16);
         }
       } else {
         this.heartbeatTimer = 0;
@@ -1419,10 +1509,32 @@ window.__resolveBelumAsset = function(p) {
       osc.stop(now + 0.025);
     }
 
+    playLeafRustle() {
+      if (!this.ctx || this.ctx.state !== 'running' || this.muted || !this.noiseBuffer) return;
+      const now = this.ctx.currentTime;
+      if (now - this.lastRustleTime < 0.24) return;
+      this.lastRustleTime = now;
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.setValueAtTime(2200 + Math.random() * 600, now);
+      filt.Q.value = 1.6;
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.24, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+      src.connect(filt);
+      filt.connect(gain);
+      gain.connect(this.masterGain);
+      src.start(now);
+      src.stop(now + 0.2);
+    }
+
     playParangSlash() {
       if (!this.init() || this.muted) return;
       const now = this.ctx.currentTime;
-      // Pitch-bent triangle wave
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
@@ -1435,7 +1547,6 @@ window.__resolveBelumAsset = function(p) {
       osc.start(now);
       osc.stop(now + 0.16);
 
-      // Filtered white noise air whoosh
       if (this.noiseBuffer) {
         const src = this.ctx.createBufferSource();
         src.buffer = this.noiseBuffer;
@@ -1459,7 +1570,6 @@ window.__resolveBelumAsset = function(p) {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'triangle';
-      // Section 9: Exponential frequency sweep 880 Hz -> 140 Hz
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.exponentialRampToValueAtTime(140, now + 0.16);
       gain.gain.setValueAtTime(0.32, now);
@@ -1473,7 +1583,6 @@ window.__resolveBelumAsset = function(p) {
     playSuppressedShot() {
       if (!this.init() || this.muted) return;
       const now = this.ctx.currentTime;
-      // Section 9: Low-passed 240 Hz thump + snappy mechanical click
       const osc = this.ctx.createOscillator();
       const filt = this.ctx.createBiquadFilter();
       const gain = this.ctx.createGain();
@@ -1490,7 +1599,6 @@ window.__resolveBelumAsset = function(p) {
       osc.start(now);
       osc.stop(now + 0.11);
 
-      // Mechanical slide click
       const click = this.ctx.createOscillator();
       const cg = this.ctx.createGain();
       click.type = 'square';
@@ -1526,7 +1634,6 @@ window.__resolveBelumAsset = function(p) {
     playRadioAlert() {
       if (!this.init() || this.muted) return;
       const now = this.ctx.currentTime;
-      // Section 9: Dual square-wave chirp (1100 Hz / 1650 Hz) + white noise static burst
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'square';
@@ -1558,6 +1665,39 @@ window.__resolveBelumAsset = function(p) {
       gain.connect(this.masterGain);
       osc.start(now);
       osc.stop(now + 0.36);
+    }
+
+    playBoarImpact() {
+      if (!this.init() || this.muted) return;
+      const now = this.ctx.currentTime;
+      // Heavy wooden/concrete concussion thud
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(125, now);
+      osc.frequency.exponentialRampToValueAtTime(34, now + 0.28);
+      gain.gain.setValueAtTime(0.58, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(now);
+      osc.stop(now + 0.34);
+
+      if (this.noiseBuffer) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuffer;
+        const filt = this.ctx.createBiquadFilter();
+        filt.type = 'lowpass';
+        filt.frequency.value = 520;
+        const ng = this.ctx.createGain();
+        ng.gain.setValueAtTime(0.45, now);
+        ng.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+        src.connect(filt);
+        filt.connect(ng);
+        ng.connect(this.masterGain);
+        src.start(now);
+        src.stop(now + 0.24);
+      }
     }
 
     playDecoyClatter() {
@@ -1593,16 +1733,16 @@ window.__resolveBelumAsset = function(p) {
       osc.stop(now + 0.44);
     }
 
-    playHeartbeat() {
+    playHeartbeat(vol) {
       if (!this.ctx || this.muted) return;
       const now = this.ctx.currentTime;
-      // Section 9: 55 Hz sub-bass sine wave double thump
-      [0, 0.16].forEach((delay, i) => {
+      const baseVol = vol || 0.35;
+      [0, 0.15].forEach((delay, i) => {
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime(55, now + delay);
-        gain.gain.setValueAtTime(i === 0 ? 0.35 : 0.24, now + delay);
+        gain.gain.setValueAtTime(i === 0 ? baseVol : baseVol * 0.68, now + delay);
         gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.14);
         osc.connect(gain);
         gain.connect(this.masterGain);
@@ -1621,7 +1761,7 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/engine/camera.js === */
-// src/engine/camera.js - Smooth target-follow 2.5D camera with aim lookahead & trauma shake
+// src/engine/camera.js - AAA Spring Camera with Dynamic Zoom, 75px Aim Lookahead & Directional Trauma Shake
 (function (global) {
   'use strict';
 
@@ -1630,15 +1770,29 @@ window.__resolveBelumAsset = function(p) {
       this.viewportW = viewportW || 1280;
       this.viewportH = viewportH || 720;
       this.worldW = worldW || 4200;
-      this.worldH = worldH || 1500;
+      this.worldH = worldH || 1320;
       this.x = 0;
       this.y = 0;
+
+      // Dynamic Zoom Framing: +8% in ferns (1.08), -6% sprinting (0.94), 1.0 default
+      this.zoom = 1.0;
+      this.targetZoom = 1.0;
+      this.zoomSmoothing = 4.2;
+
+      // Smooth spring follow & 75px aim lookahead
+      this.followSmoothing = 7.2;
+      this.lookaheadDist = 75;
+
+      // Directional quadratic trauma screenshake:
+      // offset = recoilDir * trauma^2 * sin(time * frequency)
+      this.trauma = 0;
+      this.traumaDecay = 2.1;
       this.shakeTime = 0;
-      this.shakeMagnitude = 0;
+      this.shakeFreq = 56;
+      this.recoilDirX = 1;
+      this.recoilDirY = 0.35;
       this.shakeOffsetX = 0;
       this.shakeOffsetY = 0;
-      this.followSmoothing = 7.5;
-      this.lookaheadDist = 55;
     }
 
     resize(viewportW, viewportH) {
@@ -1648,7 +1802,7 @@ window.__resolveBelumAsset = function(p) {
 
     setWorldBounds(worldW, worldH) {
       this.worldW = Math.max(this.viewportW, worldW || 4200);
-      this.worldH = Math.max(this.viewportH, worldH || 1500);
+      this.worldH = Math.max(this.viewportH, worldH || 1320);
     }
 
     snapTo(targetX, targetY) {
@@ -1658,15 +1812,65 @@ window.__resolveBelumAsset = function(p) {
       this.y = this._clamp(ty, 0, Math.max(0, this.worldH - this.viewportH));
     }
 
-    addShake(magnitude, duration) {
-      this.shakeMagnitude = Math.max(this.shakeMagnitude, magnitude || 6);
-      this.shakeTime = Math.max(this.shakeTime, duration || 0.25);
+    /**
+     * Directional trauma impulse pushing camera away from impact origin with quadratic decay
+     */
+    addTrauma(amount, dirX, dirY) {
+      const a = Number.isFinite(amount) ? amount : 0.4;
+      this.trauma = Math.min(1.0, Math.max(this.trauma, this.trauma + a));
+      if (Number.isFinite(dirX) && Number.isFinite(dirY)) {
+        const mag = Math.hypot(dirX, dirY);
+        if (mag > 0.01) {
+          this.recoilDirX = dirX / mag;
+          this.recoilDirY = dirY / mag;
+        }
+      } else {
+        const ang = Math.random() * Math.PI * 2;
+        this.recoilDirX = Math.cos(ang);
+        this.recoilDirY = Math.sin(ang);
+      }
     }
 
-    update(dt, targetX, targetY, aimVector) {
+    /**
+     * Backward-compatible shake helper mapped into directional trauma physics
+     */
+    addShake(magnitude, duration, dirX, dirY) {
+      const t = Math.min(1.0, Math.max(0.18, (magnitude || 6) / 11));
+      this.addTrauma(t, dirX, dirY);
+    }
+
+    updateShakeOnly(dt) {
+      const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
+      this.shakeTime += safeDt;
+      if (this.trauma > 0) {
+        const sq = this.trauma * this.trauma;
+        const wave = Math.sin(this.shakeTime * this.shakeFreq);
+        const cross = Math.cos(this.shakeTime * (this.shakeFreq * 0.73)) * 0.35;
+        const amp = 26;
+        this.shakeOffsetX = (this.recoilDirX * wave - this.recoilDirY * cross) * sq * amp;
+        this.shakeOffsetY = (this.recoilDirY * wave + this.recoilDirX * cross) * sq * amp;
+        this.trauma = Math.max(0, this.trauma - this.traumaDecay * safeDt);
+      } else {
+        this.shakeOffsetX = 0;
+        this.shakeOffsetY = 0;
+      }
+    }
+
+    update(dt, targetX, targetY, aimVector, playerState) {
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
       const ax = aimVector && Number.isFinite(aimVector.x) ? aimVector.x : 0;
       const ay = aimVector && Number.isFinite(aimVector.y) ? aimVector.y : 0;
+
+      // Dynamic zoom target: +8% zoom-in when concealed in ferns, -6% zoom-out when sprinting
+      if (playerState && playerState.isConcealed) {
+        this.targetZoom = 1.08;
+      } else if (playerState && playerState.sprinting) {
+        this.targetZoom = 0.94;
+      } else {
+        this.targetZoom = 1.0;
+      }
+      const zoomAlpha = 1 - Math.exp(-this.zoomSmoothing * safeDt);
+      this.zoom += (this.targetZoom - this.zoom) * zoomAlpha;
 
       const desiredX = (Number.isFinite(targetX) ? targetX : 0) + ax * this.lookaheadDist - this.viewportW * 0.5;
       const desiredY = (Number.isFinite(targetY) ? targetY : 0) + ay * this.lookaheadDist - this.viewportH * 0.5;
@@ -1678,33 +1882,26 @@ window.__resolveBelumAsset = function(p) {
       this.x = this._clamp(this.x, 0, Math.max(0, this.worldW - this.viewportW));
       this.y = this._clamp(this.y, 0, Math.max(0, this.worldH - this.viewportH));
 
-      if (this.shakeTime > 0) {
-        this.shakeTime = Math.max(0, this.shakeTime - safeDt);
-        const mag = this.shakeMagnitude * (this.shakeTime > 0 ? 1 : 0);
-        this.shakeOffsetX = (Math.random() * 2 - 1) * mag;
-        this.shakeOffsetY = (Math.random() * 2 - 1) * mag;
-        if (this.shakeTime === 0) {
-          this.shakeMagnitude = 0;
-          this.shakeOffsetX = 0;
-          this.shakeOffsetY = 0;
-        }
-      } else {
-        this.shakeOffsetX = 0;
-        this.shakeOffsetY = 0;
-      }
+      this.updateShakeOnly(safeDt);
     }
 
     screenToWorld(screenX, screenY) {
+      const sx = Number.isFinite(screenX) ? screenX : 0;
+      const sy = Number.isFinite(screenY) ? screenY : 0;
+      const z = this.zoom || 1.0;
+      const halfW = this.viewportW * 0.5;
+      const halfH = this.viewportH * 0.5;
       return {
-        x: (Number.isFinite(screenX) ? screenX : 0) + this.x,
-        y: (Number.isFinite(screenY) ? screenY : 0) + this.y
+        x: (sx - halfW) / z + halfW + this.x,
+        y: (sy - halfH) / z + halfH + this.y
       };
     }
 
     getRenderOffset() {
       return {
         x: Math.round(this.x + this.shakeOffsetX),
-        y: Math.round(this.y + this.shakeOffsetY)
+        y: Math.round(this.y + this.shakeOffsetY),
+        zoom: this.zoom
       };
     }
 
@@ -1908,7 +2105,7 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/input/input_manager.js === */
-// src/input/input_manager.js - Unified Desktop (WASD/Mouse) + Mobile (D-Pad/Touch) Input Controller
+// src/input/input_manager.js - Unified Desktop + Multi-Touch Mobile Controller with Haptics & Audio Unlock
 (function (global) {
   'use strict';
 
@@ -1933,6 +2130,16 @@ window.__resolveBelumAsset = function(p) {
       return { x: fallbackX !== undefined ? fallbackX : 1, y: fallbackY !== undefined ? fallbackY : 0 };
     }
     return { x: sx / mag, y: sy / mag };
+  }
+
+  function vibrate(pattern) {
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(pattern);
+      }
+    } catch (_) {
+      // Ignore on unsupported browsers
+    }
   }
 
   class InputManager {
@@ -1965,7 +2172,7 @@ window.__resolveBelumAsset = function(p) {
         weaponSelect: null
       };
 
-      // Virtual D-Pad drag state
+      // Virtual D-Pad multi-touch state
       this.dpadVector = { x: 0, y: 0 };
       this.dpadPointerId = null;
       this.dpadEl = null;
@@ -1978,8 +2185,15 @@ window.__resolveBelumAsset = function(p) {
       }
     }
 
+    _notifyUserGesture() {
+      if (this.cb && typeof this.cb.onUserGesture === 'function') {
+        this.cb.onUserGesture();
+      }
+    }
+
     _bindKeyboard() {
       window.addEventListener('keydown', (e) => {
+        this._notifyUserGesture();
         const code = e.code;
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(code)) {
           e.preventDefault();
@@ -2039,12 +2253,15 @@ window.__resolveBelumAsset = function(p) {
         this.mouseActive = true;
       });
 
-      this.canvas.addEventListener('mousedown', (e) => {
+      this.canvas.addEventListener('pointerdown', (e) => {
+        this._notifyUserGesture();
+        // Multi-touch guard: ignore if this pointer is already driving the D-Pad
+        if (this.dpadPointerId !== null && e.pointerId === this.dpadPointerId) return;
         const rect = this.canvas.getBoundingClientRect();
         this.mouseScreen.x = e.clientX - rect.left;
         this.mouseScreen.y = e.clientY - rect.top;
-        this.mouseActive = true;
-        if (e.button === 0) {
+        this.mouseActive = e.pointerType !== 'touch';
+        if (e.button === 0 || e.pointerType === 'touch') {
           this.actions.attackPrimary = true;
         } else if (e.button === 2) {
           this.aimHeld = true;
@@ -2052,7 +2269,7 @@ window.__resolveBelumAsset = function(p) {
         }
       });
 
-      window.addEventListener('mouseup', (e) => {
+      window.addEventListener('pointerup', (e) => {
         if (e.button === 2) {
           this.aimHeld = false;
         }
@@ -2084,12 +2301,12 @@ window.__resolveBelumAsset = function(p) {
           const ny = (dy / dist) * (clamped / maxR);
           this.dpadVector = normalizeVector(nx, ny);
           this._setKnobVisual((dx / dist) * clamped, (dy / dist) * clamped);
-          // Mobile auto-aim follows movement direction
           this.mouseActive = false;
           this.aimVector = normalizeUnit(nx, ny, this.aimVector.x, this.aimVector.y);
         };
 
         this.dpadEl.addEventListener('pointerdown', (e) => {
+          this._notifyUserGesture();
           if (e.target && e.target.closest && e.target.closest('#btn-sprint-center')) {
             return;
           }
@@ -2117,31 +2334,35 @@ window.__resolveBelumAsset = function(p) {
         this.dpadEl.addEventListener('pointercancel', releaseDpad);
       }
 
-      const bindTap = (id, fn) => {
+      // Multi-touch isolated pointerdown bindings: right thumb taps never conflict with left thumb D-Pad
+      const bindMultiTouchTap = (id, fn) => {
         const el = document.getElementById(id);
         if (!el) return;
-        el.addEventListener('click', (e) => {
+        el.addEventListener('pointerdown', (e) => {
+          if (this.dpadPointerId !== null && e.pointerId === this.dpadPointerId) return;
+          e.preventDefault();
           e.stopPropagation();
+          this._notifyUserGesture();
           fn();
         });
       };
 
-      bindTap('btn-sprint-center', () => {
+      bindMultiTouchTap('btn-sprint-center', () => {
         this.touchSprintToggle = !this.touchSprintToggle;
       });
-      bindTap('btn-action-hand', () => {
+      bindMultiTouchTap('btn-action-hand', () => {
         this.actions.interact = true;
       });
-      bindTap('btn-action-crosshair', () => {
+      bindMultiTouchTap('btn-action-crosshair', () => {
         this.actions.attackRanged = true;
       });
-      bindTap('btn-action-reticle', () => {
+      bindMultiTouchTap('btn-action-reticle', () => {
         this.actions.meleeSlash = true;
       });
-      bindTap('btn-action-bag', () => {
+      bindMultiTouchTap('btn-action-bag', () => {
         this.actions.quickConsumable = true;
       });
-      bindTap('btn-action-crouch', () => {
+      bindMultiTouchTap('btn-action-crouch', () => {
         this.crouchToggle = !this.crouchToggle;
       });
     }
@@ -2157,7 +2378,6 @@ window.__resolveBelumAsset = function(p) {
     }
 
     update(playerWorldPos, camera) {
-      // Combine Keyboard + Virtual D-Pad
       let kx = 0;
       let ky = 0;
       if (this.keys['KeyW'] || this.keys['ArrowUp']) ky -= 1;
@@ -2171,7 +2391,6 @@ window.__resolveBelumAsset = function(p) {
 
       this.sprintHeld = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight'] || this.touchSprintToggle);
 
-      // Compute normalized aim vector
       if (this.mouseActive && playerWorldPos && camera) {
         const worldMouse = camera.screenToWorld(this.mouseScreen.x, this.mouseScreen.y);
         const dx = worldMouse.x - playerWorldPos.x;
@@ -2181,7 +2400,6 @@ window.__resolveBelumAsset = function(p) {
         this.aimVector = normalizeUnit(this.moveVector.x, this.moveVector.y, this.aimVector.x, this.aimVector.y);
       }
 
-      // Final NaN guard
       if (!Number.isFinite(this.moveVector.x) || !Number.isFinite(this.moveVector.y)) {
         this.moveVector = { x: 0, y: 0 };
       }
@@ -2206,6 +2424,7 @@ window.__resolveBelumAsset = function(p) {
 
   InputManager.normalizeVector = normalizeVector;
   InputManager.normalizeUnit = normalizeUnit;
+  InputManager.vibrate = vibrate;
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = InputManager;
@@ -2765,7 +2984,7 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/entities/mercenary.js === */
-// src/entities/mercenary.js - Ironclad Tactical Solutions PMC Guard & Commander Ward AI
+// src/entities/mercenary.js - Ironclad PMC AI with Gradual 0.85s Ink-Eye Suspicion Meter, 4.2 rad/s Turn Inertia & Footprint Investigation
 (function (global) {
   'use strict';
 
@@ -2821,11 +3040,20 @@ window.__resolveBelumAsset = function(p) {
       this.dead = false;
       this.sector = cfg.sector || 1;
 
-      // Vision & Patrol
+      // Vision, Turn Inertia (4.2 rad/s max angular speed) & Gradual Suspicion Meter
       this.fovDeg = this.role === 'spotter' ? 75 : 65;
       this.visionRange = this.role === 'spotter' ? 320 : 270;
       this.facingAngle = Number.isFinite(cfg.facingAngle) ? cfg.facingAngle : Math.PI;
+      this.targetFacingAngle = this.facingAngle;
+      this.maxTurnSpeed = 4.2; // rad/s (240 deg/s) — eliminates instant 180 snaps
       this.facingRight = Math.cos(this.facingAngle) >= 0;
+
+      // AAA Gradual Suspicion Meter (0.0 -> 1.0 over 0.85s)
+      this.suspicionMeter = 0.0;
+      this.suspicionFillTime = 0.85;
+      this.sweepBaseAngle = this.facingAngle;
+      this.sweepPhase = 0;
+      this.lastFootprintCheck = 0;
 
       this.waypoints = Array.isArray(cfg.waypoints) && cfg.waypoints.length
         ? cfg.waypoints
@@ -2867,6 +3095,18 @@ window.__resolveBelumAsset = function(p) {
       return this.y + this.height;
     }
 
+    _rotateToward(desiredAngle, dt) {
+      this.targetFacingAngle = desiredAngle;
+      const diff = normalizeAngle(desiredAngle - this.facingAngle);
+      const maxStep = this.maxTurnSpeed * dt;
+      if (Math.abs(diff) <= maxStep) {
+        this.facingAngle = desiredAngle;
+      } else {
+        this.facingAngle = normalizeAngle(this.facingAngle + Math.sign(diff) * maxStep);
+      }
+      this.facingRight = Math.cos(this.facingAngle) >= 0;
+    }
+
     isBehindMe(px, py) {
       const toPlayerAngle = Math.atan2(py - this.centerY, px - this.centerX);
       const diff = Math.abs(normalizeAngle(toPlayerAngle - this.facingAngle));
@@ -2877,15 +3117,30 @@ window.__resolveBelumAsset = function(p) {
       if (this.dead) return;
       if (this.state === 'ALERT' && !priority) return;
       this.state = 'SUSPICIOUS';
+      this.suspicionMeter = Math.max(this.suspicionMeter, 0.45);
       this.suspicionTarget = { x: sx, y: sy };
       this.suspicionTimer = 5.5;
       this.alertMarkTimer = 1.6;
+      this.sweepBaseAngle = Math.atan2(sy - this.centerY, sx - this.centerX);
+    }
+
+    inspectFootprint(fx, fy, trackAngle) {
+      if (this.dead || this.state === 'ALERT') return;
+      this.suspicionMeter = Math.min(0.95, this.suspicionMeter + 0.2);
+      this.state = 'SUSPICIOUS';
+      this.suspicionTarget = {
+        x: fx + Math.cos(trackAngle || 0) * 65,
+        y: fy + Math.sin(trackAngle || 0) * 65
+      };
+      this.suspicionTimer = Math.max(this.suspicionTimer, 4.0);
+      this.sweepBaseAngle = Number.isFinite(trackAngle) ? trackAngle : Math.atan2(fy - this.centerY, fx - this.centerX);
     }
 
     triggerAlert(tx, ty, ctxEvents) {
       if (this.dead) return;
       const wasAlert = this.state === 'ALERT';
       this.state = 'ALERT';
+      this.suspicionMeter = 1.0;
       this.suspicionTarget = { x: tx, y: ty };
       this.alertMemoryTimer = 6.5;
       this.alertMarkTimer = 2.0;
@@ -2902,6 +3157,7 @@ window.__resolveBelumAsset = function(p) {
       if (this.hp <= 0) {
         this.dead = true;
         this.state = 'DEAD';
+        this.suspicionMeter = 0;
         if (ctxEvents && ctxEvents.onMercKilled) {
           ctxEvents.onMercKilled(this);
         }
@@ -2913,7 +3169,6 @@ window.__resolveBelumAsset = function(p) {
 
     _canSeeTarget(tx, ty, isConcealed, obstacles) {
       if (isConcealed) {
-        // Section 7.2: 100% invisible unless physically colliding
         const dist = Math.hypot(tx - this.centerX, ty - this.centerY);
         return dist < 24;
       }
@@ -2939,7 +3194,7 @@ window.__resolveBelumAsset = function(p) {
       let activeTarget = null;
       let targetDist = Infinity;
 
-      // 1. Check Faction Infighting: scan hostile/nearby Mutated Boars (FAUNA)
+      // 1. Faction Infighting: scan hostile/nearby Mutated Boars (FAUNA)
       if (Array.isArray(boars)) {
         for (let i = 0; i < boars.length; i++) {
           const b = boars[i];
@@ -2954,16 +3209,44 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // 2. Check Player visibility (respects fern/log concealment)
+      // 2. Gradual Player Detection (0.85s Inking Eye Suspicion Meter)
+      let seesPlayer = false;
       if (player && !player.dead) {
-        const seesPlayer = this._canSeeTarget(player.centerX, player.centerY, player.isConcealed, obstacles);
+        seesPlayer = this._canSeeTarget(player.centerX, player.centerY, player.isConcealed, obstacles);
         const distP = Math.hypot(player.centerX - this.centerX, player.centerY - this.centerY);
-        // Sprinting loudly right next to guard triggers suspicion
-        if (seesPlayer && distP < targetDist) {
-          activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
-          targetDist = distP;
-        } else if (player.sprinting && distP < 130 && this.state === 'PATROL') {
-          this.hearSound(player.centerX, player.centerY, false);
+
+        if (seesPlayer) {
+          if (this.state === 'ALERT') {
+            if (distP < targetDist) {
+              activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
+              targetDist = distP;
+            }
+          } else {
+            // Fill suspicion gradually over 0.85s (faster if very close)
+            const fillDuration = distP < 90 ? 0.38 : this.suspicionFillTime;
+            this.suspicionMeter = Math.min(1.0, this.suspicionMeter + safeDt / fillDuration);
+            this.suspicionTarget = { x: player.centerX, y: player.centerY };
+            this.suspicionTimer = 4.8;
+            this.sweepBaseAngle = Math.atan2(player.centerY - this.centerY, player.centerX - this.centerX);
+
+            if (this.suspicionMeter >= 1.0) {
+              this.triggerAlert(player.centerX, player.centerY, ctxEvents);
+              if (distP < targetDist) {
+                activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
+                targetDist = distP;
+              }
+            } else {
+              this.state = 'SUSPICIOUS';
+            }
+          }
+        } else {
+          // Decay suspicion gently when player dives into ferns or behind hollow log
+          if (this.state !== 'ALERT' && this.suspicionMeter > 0) {
+            this.suspicionMeter = Math.max(0, this.suspicionMeter - safeDt * 0.24);
+          }
+          if (player.sprinting && distP < 130 && this.state === 'PATROL') {
+            this.hearSound(player.centerX, player.centerY, false);
+          }
         }
       }
 
@@ -2971,30 +3254,32 @@ window.__resolveBelumAsset = function(p) {
 
       if (activeTarget) {
         this.triggerAlert(activeTarget.x, activeTarget.y, ctxEvents);
-        this.facingAngle = Math.atan2(activeTarget.y - this.centerY, activeTarget.x - this.centerX);
-        this.facingRight = Math.cos(this.facingAngle) >= 0;
+        const desiredAngle = Math.atan2(activeTarget.y - this.centerY, activeTarget.x - this.centerX);
+        this._rotateToward(desiredAngle, safeDt);
 
-        // Maintain tactical firing distance or engage with 3-round bursts
         if (targetDist > 210) {
           isMoving = this._moveToward(activeTarget.x, activeTarget.y, this.alertSpeed, safeDt, level);
         }
 
-        // Fire 3-round burst
-        if (this.burstRemaining > 0) {
-          this.burstIntervalTimer -= safeDt;
-          if (this.burstIntervalTimer <= 0) {
-            this.burstRemaining--;
-            this.burstIntervalTimer = 0.13;
-            this.firingAnimTimer = 0.22;
-            if (ctxEvents && ctxEvents.onMercFire) {
-              const spread = (Math.random() - 0.5) * 0.08;
-              ctxEvents.onMercFire(this, this.facingAngle + spread, this.bulletDamage);
+        // Only fire when laser sight is reasonably aligned with target (respects turn inertia!)
+        const aimErr = Math.abs(normalizeAngle(desiredAngle - this.facingAngle));
+        if (aimErr < 0.35) {
+          if (this.burstRemaining > 0) {
+            this.burstIntervalTimer -= safeDt;
+            if (this.burstIntervalTimer <= 0) {
+              this.burstRemaining--;
+              this.burstIntervalTimer = 0.13;
+              this.firingAnimTimer = 0.22;
+              if (ctxEvents && ctxEvents.onMercFire) {
+                const spread = (Math.random() - 0.5) * 0.08;
+                ctxEvents.onMercFire(this, this.facingAngle + spread, this.bulletDamage);
+              }
             }
+          } else if (this.fireCooldown <= 0) {
+            this.burstRemaining = this.role === 'commander' ? 2 : 3;
+            this.burstIntervalTimer = 0;
+            this.fireCooldown = this.role === 'commander' ? 1.15 : 1.55;
           }
-        } else if (this.fireCooldown <= 0) {
-          this.burstRemaining = this.role === 'commander' ? 2 : 3;
-          this.burstIntervalTimer = 0;
-          this.fireCooldown = this.role === 'commander' ? 1.15 : 1.55;
         }
       } else if (this.state === 'ALERT') {
         this.alertMemoryTimer -= safeDt;
@@ -3003,26 +3288,36 @@ window.__resolveBelumAsset = function(p) {
           if (dist > 28) {
             isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.alertSpeed, safeDt, level);
           } else {
-            this.facingAngle += 1.4 * safeDt;
+            this.sweepPhase += safeDt * 2.2;
+            this._rotateToward(this.sweepBaseAngle + Math.sin(this.sweepPhase) * 0.78, safeDt);
           }
         }
         if (this.alertMemoryTimer <= 0) {
-          this.state = 'PATROL';
+          this.state = 'SUSPICIOUS';
+          this.suspicionMeter = 0.55;
+          this.suspicionTimer = 3.0;
         }
       } else if (this.state === 'SUSPICIOUS') {
         this.suspicionTimer -= safeDt;
         if (this.suspicionTarget) {
           const dist = Math.hypot(this.suspicionTarget.x - this.centerX, this.suspicionTarget.y - this.centerY);
-          if (dist > 34) {
-            isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.patrolSpeed * 1.15, safeDt, level);
+          if (seesPlayer) {
+            // Pause & track movement while eye meter fills
+            const lookAng = Math.atan2(this.suspicionTarget.y - this.centerY, this.suspicionTarget.x - this.centerX);
+            this._rotateToward(lookAng, safeDt);
+          } else if (dist > 34) {
+            isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.patrolSpeed * 1.12, safeDt, level);
           } else {
-            // Look around cautiously
-            this.facingAngle += Math.sin(this.suspicionTimer * 2.5) * 1.1 * safeDt;
+            // 45-degree laser sweep inspection before returning to patrol
+            this.sweepPhase += safeDt * 2.4;
+            const sweepOffset = Math.sin(this.sweepPhase) * (Math.PI * 0.25); // +/- 45 deg
+            this._rotateToward(this.sweepBaseAngle + sweepOffset, safeDt);
           }
         }
-        if (this.suspicionTimer <= 0) {
+        if (this.suspicionTimer <= 0 && !seesPlayer) {
           this.state = 'PATROL';
           this.suspicionTarget = null;
+          this.suspicionMeter = 0;
         }
       } else {
         // PATROL state
@@ -3042,9 +3337,6 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      this.facingRight = Math.cos(this.facingAngle) >= 0;
-
-      // Update 8-frame animations
       if (this.firingAnimTimer > 0 && this.animFire) {
         this.animFire.update(safeDt, true);
       } else if (this.animPatrol) {
@@ -3059,7 +3351,7 @@ window.__resolveBelumAsset = function(p) {
       if (dist < 2) return false;
       const vx = (dx / dist) * speed;
       const vy = (dy / dist) * speed;
-      this.facingAngle = Math.atan2(dy, dx);
+      this._rotateToward(Math.atan2(dy, dx), dt);
 
       const nx = this.x + vx * dt;
       if (!this._hitsSolid(nx, this.y, level)) this.x = nx;
@@ -3090,14 +3382,49 @@ window.__resolveBelumAsset = function(p) {
       return false;
     }
 
+    _drawInkSuspicionEye(ctx) {
+      const cx = this.centerX;
+      const cy = this.y - 24;
+      const fill = Math.max(0, Math.min(1, this.suspicionMeter));
+
+      ctx.save();
+      // Hand-drawn parchment eye silhouette
+      ctx.beginPath();
+      ctx.moveTo(cx - 14, cy);
+      ctx.quadraticCurveTo(cx, cy - 11, cx + 14, cy);
+      ctx.quadraticCurveTo(cx, cy + 11, cx - 14, cy);
+      ctx.closePath();
+      ctx.fillStyle = '#F7F3E8';
+      ctx.fill();
+
+      // Clip interior & fill upward with Prussian Blue -> Crimson ink as suspicion rises
+      ctx.save();
+      ctx.clip();
+      const fillH = 22 * fill;
+      ctx.fillStyle = fill > 0.72 ? '#F85A5A' : '#111E33';
+      ctx.fillRect(cx - 15, cy + 11 - fillH, 30, fillH);
+      // Pupil ring
+      ctx.strokeStyle = fill > 0.5 ? '#F7F3E8' : '#111E33';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4.2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Outer dip-pen ink rim
+      ctx.strokeStyle = fill > 0.72 ? '#C9323B' : '#111E33';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.restore();
+    }
+
     draw(ctx) {
       if (!ctx) return;
       ctx.save();
       if (this.dead) {
-        ctx.globalAlpha = 0.32;
+        ctx.globalAlpha = 0.34;
       }
 
-      // Ground ink shadow
       ctx.fillStyle = 'rgba(17, 30, 51, 0.22)';
       ctx.beginPath();
       ctx.ellipse(this.centerX, this.y + this.height - 4, 21, 8, 0, 0, Math.PI * 2);
@@ -3110,7 +3437,6 @@ window.__resolveBelumAsset = function(p) {
 
       let drawn = false;
       if (this.dead) {
-        // Ink silhouette marker for neutralized guard
         ctx.strokeStyle = '#111E33';
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -3160,12 +3486,16 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Crimson alert "!" or "?" mark
-      if (!this.dead && (this.state === 'ALERT' || this.state === 'SUSPICIOUS')) {
-        ctx.fillStyle = this.state === 'ALERT' ? '#F85A5A' : '#C9323B';
-        ctx.font = '900 22px "Georgia", serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(this.state === 'ALERT' ? '!' : '?', this.centerX, this.y - 18);
+      // AAA Gradual Ink-Eye Suspicion Indicator OR Alert "!"
+      if (!this.dead) {
+        if (this.state === 'ALERT') {
+          ctx.fillStyle = '#F85A5A';
+          ctx.font = '900 22px "Georgia", serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('!', this.centerX, this.y - 20);
+        } else if (this.suspicionMeter > 0.04) {
+          this._drawInkSuspicionEye(ctx);
+        }
       }
 
       if (this.hurtFlashTimer > 0) {
@@ -3189,7 +3519,7 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/entities/boar.js === */
-// src/entities/boar.js - Mutated Babi Hutan (Wild Boar) AI with 1.2s Soft Radial Red Telegraph & Faction Infighting
+// src/entities/boar.js - Mutated Babi Hutan AI with 1.2s Red Telegraph, Faction Infighting & 2.6s Matador Wall-Stun Concussion
 (function (global) {
   'use strict';
 
@@ -3202,8 +3532,8 @@ window.__resolveBelumAsset = function(p) {
       const cfg = opts || {};
       this.id = cfg.id || `boar_${Math.random().toString(36).slice(2, 7)}`;
       this.faction = 'FAUNA';
-      this.x = Number.isFinite(cfg.x) ? cfg.x : 2200;
-      this.y = Number.isFinite(cfg.y) ? cfg.y : 640;
+      this.x = Number.isFinite(cfg.x) ? cfg.x : 2480;
+      this.y = Number.isFinite(cfg.y) ? cfg.y : 525;
       this.homeX = this.x;
       this.homeY = this.y;
       this.width = 64;
@@ -3214,19 +3544,23 @@ window.__resolveBelumAsset = function(p) {
       this.dead = false;
       this.meatHarvested = false;
 
-      // Section 7.4: 1.2s soft radial red telegraph circle (#F85A5A), charge dealing 60-78 damage
-      this.state = 'GRAZE'; // 'GRAZE' | 'AGITATED' | 'TELEGRAPH' | 'CHARGE' | 'RECOIL' | 'DEAD'
+      // State Machine: 'GRAZE' | 'AGITATED' | 'TELEGRAPH' | 'CHARGE' | 'RECOIL' | 'STUNNED' | 'DEAD'
+      this.state = 'GRAZE';
       this.telegraphDuration = 1.2;
       this.telegraphTimer = 0;
       this.telegraphRadius = 96;
-      this.chargeDuration = 0.72;
+      this.chargeDuration = 0.78;
       this.chargeTimer = 0;
       this.chargeSpeed = 420;
       this.chargeDirX = 1;
       this.chargeDirY = 0;
-      this.chargeDamage = 78; // Massive damage matching reference "78" crimson damage number
-      this.playerChargeDamage = 4; // Scaled against player's 11 HP pool (hardcore 2-3 hits kill)
+      this.chargeDamage = 78;
+      this.playerChargeDamage = 4;
       this.hitSet = new Set();
+
+      // AAA Matador Wall-Crash Concussion (2.6s stun with 3 orbiting ink stars)
+      this.stunDuration = 2.6;
+      this.stunTimer = 0;
 
       this.recoilTimer = 0;
       this.grazeTimer = 1.5;
@@ -3235,7 +3569,6 @@ window.__resolveBelumAsset = function(p) {
       this.hurtFlashTimer = 0;
       this.provokedTarget = null;
 
-      // 8-frame animators
       this.animIdle = Animator ? new Animator({ fps: 8, framePrefix: 'boar_idle' }) : null;
       this.animCharge = Animator ? new Animator({ fps: 12, framePrefix: 'boar_charge' }) : null;
     }
@@ -3253,7 +3586,7 @@ window.__resolveBelumAsset = function(p) {
     }
 
     provokeToward(tx, ty, ctxEvents) {
-      if (this.dead) return;
+      if (this.dead || this.state === 'STUNNED') return;
       this.provokedTarget = { x: tx, y: ty };
       if (this.state === 'GRAZE' || this.state === 'AGITATED') {
         this._beginTelegraph(tx, ty, ctxEvents);
@@ -3262,7 +3595,9 @@ window.__resolveBelumAsset = function(p) {
 
     takeDamage(amount, attackerPos, ctxEvents) {
       if (this.dead) return 0;
-      const dmg = Math.max(1, Math.round(amount || 1));
+      // Bonus vulnerability during STUNNED concussion window
+      const mult = this.state === 'STUNNED' ? 1.35 : 1.0;
+      const dmg = Math.max(1, Math.round((amount || 1) * mult));
       this.hp = Math.max(0, this.hp - dmg);
       this.hurtFlashTimer = 0.22;
       if (this.hp <= 0) {
@@ -3297,6 +3632,16 @@ window.__resolveBelumAsset = function(p) {
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
       if (this.hurtFlashTimer > 0) this.hurtFlashTimer = Math.max(0, this.hurtFlashTimer - safeDt);
 
+      // Handle STUNNED concussion state (2.6s)
+      if (this.state === 'STUNNED') {
+        this.stunTimer -= safeDt;
+        if (this.animIdle) this.animIdle.update(safeDt * 0.35, true);
+        if (this.stunTimer <= 0) {
+          this.state = 'GRAZE';
+        }
+        return;
+      }
+
       // Find nearest valid target (Mercenaries OR non-concealed Player)
       let nearest = null;
       let nearestDist = 275;
@@ -3329,7 +3674,6 @@ window.__resolveBelumAsset = function(p) {
             this.grazeTimer = 1.6 + Math.random() * 1.6;
             const ang = Math.random() * Math.PI * 2;
             this.grazeDir = { x: Math.cos(ang), y: Math.sin(ang) };
-            // Stay near home territory
             if (Math.hypot(this.x - this.homeX, this.y - this.homeY) > 130) {
               const hx = this.homeX - this.x;
               const hy = this.homeY - this.y;
@@ -3359,23 +3703,26 @@ window.__resolveBelumAsset = function(p) {
         this.chargeTimer -= safeDt;
         const nx = this.x + this.chargeDirX * this.chargeSpeed * safeDt;
         const ny = this.y + this.chargeDirY * this.chargeSpeed * safeDt;
-        let hitWall = false;
-        if (!this._hitsSolid(nx, this.y, level)) {
-          this.x = nx;
-        } else {
-          hitWall = true;
-        }
-        if (!this._hitsSolid(this.x, ny, level)) {
-          this.y = ny;
-        } else {
-          hitWall = true;
-        }
+        const hitObsX = this._hitsSolid(nx, this.y, level);
+        const hitObsY = this._hitsSolid(this.x, ny, level);
+        if (!hitObsX) this.x = nx;
+        if (!hitObsY) this.y = ny;
 
-        // Faction Infighting & Gore Collisions (hits BOTH Mercenaries and Player!)
+        const collidedObs = hitObsX || hitObsY;
+
         this._checkChargeImpacts(player, mercenaries, ctxEvents);
 
         if (this.animCharge) this.animCharge.update(safeDt * 1.4, true);
-        if (this.chargeTimer <= 0 || hitWall) {
+
+        if (collidedObs) {
+          // AAA Matador Wall-Crash Concussion!
+          this.state = 'STUNNED';
+          this.stunTimer = this.stunDuration;
+          this.provokedTarget = null;
+          if (ctxEvents && ctxEvents.onBoarWallStun) {
+            ctxEvents.onBoarWallStun(this, collidedObs);
+          }
+        } else if (this.chargeTimer <= 0) {
           this.state = 'RECOIL';
           this.recoilTimer = 0.85;
           this.provokedTarget = null;
@@ -3396,7 +3743,6 @@ window.__resolveBelumAsset = function(p) {
     _checkChargeImpacts(player, mercenaries, ctxEvents) {
       const impactR = 46;
 
-      // Gore Mercenaries (Faction Infighting: FAUNA vs MERC)
       if (Array.isArray(mercenaries)) {
         for (let i = 0; i < mercenaries.length; i++) {
           const m = mercenaries[i];
@@ -3407,28 +3753,27 @@ window.__resolveBelumAsset = function(p) {
               this.hitSet.add(m.id);
               const dealt = m.takeDamage(this.chargeDamage, { x: this.centerX, y: this.centerY }, ctxEvents);
               if (ctxEvents && ctxEvents.onBoarImpact) {
-                ctxEvents.onBoarImpact(m, dealt, '78');
+                ctxEvents.onBoarImpact(m, dealt, '78', this);
               }
             }
           }
         }
       }
 
-      // Gore Player
       if (player && !player.dead && !this.hitSet.has('PLAYER')) {
         const distP = Math.hypot(player.centerX - this.centerX, player.centerY - this.centerY);
         if (distP < impactR) {
           this.hitSet.add('PLAYER');
           const dealt = player.takeDamage(this.playerChargeDamage);
           if (dealt > 0 && ctxEvents && ctxEvents.onBoarImpact) {
-            ctxEvents.onBoarImpact(player, dealt, `-${dealt} HP`);
+            ctxEvents.onBoarImpact(player, dealt, `-${dealt} HP`, this);
           }
         }
       }
     }
 
     _hitsSolid(testX, testY, level) {
-      if (!level || !Array.isArray(level.obstacles)) return false;
+      if (!level || !Array.isArray(level.obstacles)) return null;
       const cx = testX + this.width * 0.5;
       const cy = testY + this.height * 0.72;
       const r = 20;
@@ -3443,20 +3788,64 @@ window.__resolveBelumAsset = function(p) {
         const clX = Math.max(bx, Math.min(cx, bx + bw));
         const clY = Math.max(by, Math.min(cy, by + bh));
         if ((cx - clX) * (cx - clX) + (cy - clY) * (cy - clY) < r * r) {
-          return true;
+          return obs;
         }
       }
-      return false;
+      return null;
     }
 
-    draw(ctx) {
+    _drawStunStars(ctx, time) {
+      const cx = this.centerX;
+      const cy = this.y - 8;
+      const t = (time || 0) * 4.8;
+      ctx.save();
+      // Orbit ring
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.35)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 22, 8, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 3 orbiting hand-drawn ink stars
+      for (let s = 0; s < 3; s++) {
+        const ang = t + (s * Math.PI * 2) / 3;
+        const sx = cx + Math.cos(ang) * 22;
+        const sy = cy + Math.sin(ang) * 8;
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.rotate(ang);
+        ctx.fillStyle = s === 0 ? '#F85A5A' : '#F7F3E8';
+        ctx.strokeStyle = '#111E33';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        for (let p = 0; p < 5; p++) {
+          const outerA = (p * Math.PI * 2) / 5 - Math.PI * 0.5;
+          const innerA = outerA + Math.PI / 5;
+          const ox = Math.cos(outerA) * 6;
+          const oy = Math.sin(outerA) * 6;
+          const ix = Math.cos(innerA) * 2.5;
+          const iy = Math.sin(innerA) * 2.5;
+          if (p === 0) ctx.moveTo(ox, oy);
+          else ctx.lineTo(ox, oy);
+          ctx.lineTo(ix, iy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+
+    draw(ctx, time) {
       if (!ctx) return;
       ctx.save();
       if (this.dead) {
         ctx.globalAlpha = 0.4;
       }
 
-      // Ground ink shadow
       ctx.fillStyle = 'rgba(17, 30, 51, 0.22)';
       ctx.beginPath();
       ctx.ellipse(this.centerX, this.y + this.height - 4, 28, 10, 0, 0, Math.PI * 2);
@@ -3485,7 +3874,10 @@ window.__resolveBelumAsset = function(p) {
         ctx.stroke();
       }
 
-      // HP bar when damaged
+      if (!this.dead && this.state === 'STUNNED') {
+        this._drawStunStars(ctx, time);
+      }
+
       if (!this.dead && this.hp < this.maxHp) {
         const bw = 48;
         const bx = this.centerX - bw * 0.5;
@@ -3497,14 +3889,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.fillStyle = '#F85A5A';
         ctx.fillRect(bx, by, bw * Math.max(0, this.hp / this.maxHp), 6);
         ctx.strokeRect(bx, by, bw, 6);
-      }
-
-      if (this.dead && !this.meatHarvested) {
-        ctx.globalAlpha = 0.95;
-        ctx.fillStyle = '#111E33';
-        ctx.font = 'bold 10px "Courier New", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('[E] HARVEST BOAR MEAT', this.centerX, this.y - 6);
       }
 
       if (this.hurtFlashTimer > 0) {
@@ -3578,12 +3962,31 @@ window.__resolveBelumAsset = function(p) {
       this.unlocked = false;
       this.openProgress = 0; // For blast_gate sliding open (0..1)
 
+      // Foliage Rustle & Plant Physics (±6px shear at 8Hz damped over 0.4s)
+      this.rustleTimer = 0;
+      this.rustleDuration = 0.4;
+      this.rustleDir = 1;
+
       // Link isolated sliced environment PNGs
       if (this.type === 'hollow_log') this.spriteEntry = loadPropSprite('assets/environment/hollow_log.png');
       else if (this.type === 'fern') this.spriteEntry = loadPropSprite('assets/environment/fern_clump.png');
       else if (this.type === 'bamboo') this.spriteEntry = loadPropSprite('assets/environment/bamboo_cluster.png');
       else if (this.type === 'blast_gate') this.spriteEntry = loadPropSprite('assets/environment/gate_blast_door.png');
       else this.spriteEntry = null;
+    }
+
+    triggerRustle(dir) {
+      if (this.type !== 'fern' && this.type !== 'bamboo') return false;
+      if (this.rustleTimer > 0.24) return false;
+      this.rustleTimer = this.rustleDuration;
+      this.rustleDir = dir ? Math.sign(dir) : 1;
+      return true;
+    }
+
+    update(dt) {
+      if (this.rustleTimer > 0) {
+        this.rustleTimer = Math.max(0, this.rustleTimer - (dt || 0.016));
+      }
     }
 
     get sortY() {
@@ -3607,6 +4010,18 @@ window.__resolveBelumAsset = function(p) {
         this._drawCulvertGrate(ctx);
         ctx.restore();
         return;
+      }
+
+      // Apply AAA Foliage Rustle shear (±6px oscillation at 8Hz damped over 0.4s)
+      if (this.rustleTimer > 0 && (this.type === 'fern' || this.type === 'bamboo')) {
+        const elapsed = this.rustleDuration - this.rustleTimer;
+        const damping = this.rustleTimer / this.rustleDuration;
+        const swayPx = Math.sin(elapsed * Math.PI * 2 * 8) * 6 * damping * this.rustleDir;
+        const pivotX = this.x + this.width * 0.5;
+        const pivotY = this.y + this.height;
+        ctx.translate(pivotX, pivotY);
+        ctx.transform(1, 0, swayPx / Math.max(40, this.height), 1, 0, 0);
+        ctx.translate(-pivotX, -pivotY);
       }
 
       // Draw generated hand-inked PNG prop if ready
@@ -4153,8 +4568,9 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/engine/renderer.js === */
-// src/engine/renderer.js - 2.5D Oblique Dip-Pen Ink Canvas Renderer with Y-Sorting & Red Telegraphs
-// Palette strictly enforces Prussian Blue Ink (#111E33) on Aged Cream Paper (#F7F3E8) + Crimson (#F85A5A)
+// src/engine/renderer.js - AAA 2.5D Oblique Dip-Pen Ink Canvas Renderer
+// Features: Y-Sorting, Ink-Bleed Death Puddles, Mud Footprints, Dynamic Zoom, Blueprint Fog-of-War, Leaf Specks & Diegetic Calligraphy Badges
+// Strictly Prussian Blue Ink (#111E33) on Aged Cream Paper (#F7F3E8) + Crimson (#F85A5A). ZERO pure RGB black.
 (function (global) {
   'use strict';
 
@@ -4229,9 +4645,6 @@ window.__resolveBelumAsset = function(p) {
       this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     }
 
-    /**
-     * Core Y-Sorting helper matching Section 7.2 specification
-     */
     static sortByDepth(entitiesList) {
       return entitiesList.sort((a, b) => {
         const ay = (a.sortY !== undefined ? a.sortY : (a.y + (a.height || 0)));
@@ -4246,14 +4659,14 @@ window.__resolveBelumAsset = function(p) {
       const safeDt = Math.min(0.05, Math.max(0, Number.isFinite(dt) ? dt : 0.016));
       this.time += safeDt;
 
-      const cam = state.camera ? state.camera.getRenderOffset() : { x: 0, y: 0 };
+      const cam = state.camera ? state.camera.getRenderOffset() : { x: 0, y: 0, zoom: 1 };
+      const zoom = Number.isFinite(cam.zoom) ? cam.zoom : 1;
 
       // 1. Aged Cream Parchment Base
       ctx.save();
       ctx.fillStyle = PALETTE.paperBase;
       ctx.fillRect(0, 0, this.width, this.height);
 
-      // Subtle paper tooth pattern
       if (this.paperPattern) {
         ctx.save();
         ctx.globalAlpha = 0.32;
@@ -4265,23 +4678,30 @@ window.__resolveBelumAsset = function(p) {
         this._drawProceduralPaperGrain(ctx, cam);
       }
 
-      // World-space transform
+      // World-space transform with AAA Spring Camera Dynamic Zoom
       ctx.save();
-      ctx.translate(-cam.x, -cam.y);
+      ctx.translate(this.width * 0.5, this.height * 0.5);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-this.width * 0.5 - cam.x, -this.height * 0.5 - cam.y);
 
       // 2. Ground Sectors, Riverbank Water, Paths, Floorboards & Concrete
       if (state.level) {
         this._drawTerrain(ctx, state.level, cam);
       }
 
-      // 3. Ground Layer Effects: Spores, Floodlights, Vision Cones, Telegraphs, Acoustic Rings, Laser Tripwires
+      // 3. Persistent Ground Stains & Environmental Traces:
+      //    Wet Mud Footprints -> Organic Fountain-Pen Ink-Bleed Death Puddles
+      this._drawFootprints(ctx, state);
+      this._drawInkPuddles(ctx, state);
+
+      // 4. Ground Layer Effects: Spores, Floodlights, Vision Cones, Telegraphs, Acoustic Rings, Tripwires
       this._drawGroundZones(ctx, state);
       this._drawVisionConesAndLasers(ctx, state);
       this._drawTelegraphs(ctx, state);
       this._drawAcousticRings(ctx, state);
       this._drawPickupsAndInteractables(ctx, state);
 
-      // 4. 2.5D Y-SORTING DEPTH PASS (Obstacles, Ferns, Logs, Player, Mercenaries, Boars, Projectiles)
+      // 5. 2.5D Y-SORTING DEPTH PASS
       const drawables = [];
       if (state.level && Array.isArray(state.level.obstacles)) {
         for (let i = 0; i < state.level.obstacles.length; i++) {
@@ -4291,23 +4711,15 @@ window.__resolveBelumAsset = function(p) {
           }
         }
       }
-      if (state.player) {
-        drawables.push(state.player);
-      }
+      if (state.player) drawables.push(state.player);
       if (Array.isArray(state.mercenaries)) {
-        for (let i = 0; i < state.mercenaries.length; i++) {
-          drawables.push(state.mercenaries[i]);
-        }
+        for (let i = 0; i < state.mercenaries.length; i++) drawables.push(state.mercenaries[i]);
       }
       if (Array.isArray(state.boars)) {
-        for (let i = 0; i < state.boars.length; i++) {
-          drawables.push(state.boars[i]);
-        }
+        for (let i = 0; i < state.boars.length; i++) drawables.push(state.boars[i]);
       }
       if (Array.isArray(state.projectiles)) {
-        for (let i = 0; i < state.projectiles.length; i++) {
-          drawables.push(state.projectiles[i]);
-        }
+        for (let i = 0; i < state.projectiles.length; i++) drawables.push(state.projectiles[i]);
       }
 
       Renderer25D.sortByDepth(drawables);
@@ -4318,13 +4730,18 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // 5. Melee Slash Arcs & Floating Crimson Damage Numbers / Alert Marks
+      // 6. Dynamic Blueprint Fog-of-War Hatching behind concrete bunker walls
+      this._drawBlueprintFogOfWar(ctx, state);
+
+      // 7. Fluttering Ink Leaf Specks, Slash Arcs, Diegetic Calligraphic Badges & Floating Damage Numbers
+      this._drawLeafParticles(ctx, state);
       this._drawSlashEffects(ctx, state);
+      this._drawDiegeticBadge(ctx, state);
       this._drawFloatingTexts(ctx, state);
 
       ctx.restore(); // End world-space
 
-      // 6. Screen-space Tropical Rain & Low-Health Crimson Pulse
+      // 8. Screen-space Tropical Rain & Low-Health Crimson Pulse
       this._drawRainOverlay(ctx, safeDt);
       if (state.player && state.player.hp > 0 && state.player.hp <= Math.ceil(state.player.maxHp * 0.3)) {
         const pulse = 0.08 + 0.08 * Math.sin(this.time * 7);
@@ -4342,7 +4759,7 @@ window.__resolveBelumAsset = function(p) {
     }
 
     _isVisible(x, y, w, h, cam) {
-      const margin = 180;
+      const margin = 240;
       return (
         x + w >= cam.x - margin &&
         x <= cam.x + this.width + margin &&
@@ -4373,8 +4790,195 @@ window.__resolveBelumAsset = function(p) {
       ctx.restore();
     }
 
+    /**
+     * AAA Organic "Fountain Pen Ink-Bleed" Death Puddles (#111E33)
+     * 3 overlapping feathered organic ellipses expanding smoothly into parchment grain over 2.4 seconds
+     */
+    _drawInkPuddles(ctx, state) {
+      const puddles = state.inkPuddles || [];
+      for (let i = 0; i < puddles.length; i++) {
+        const p = puddles[i];
+        const t = Math.min(1, p.age / (p.growDuration || 2.4));
+        // Smooth ease-out bleed curve
+        const ease = 1 - Math.pow(1 - t, 3);
+        const lobes = p.lobes || [];
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+
+        // Soft outer paper-seepage halo
+        const haloR = (p.baseRadius || 32) * (0.45 + 0.72 * ease);
+        const grad = ctx.createRadialGradient(0, 0, haloR * 0.2, 0, 0, haloR * 1.25);
+        grad.addColorStop(0, 'rgba(17, 30, 51, 0.42)');
+        grad.addColorStop(0.68, 'rgba(28, 40, 68, 0.24)');
+        grad.addColorStop(1, 'rgba(17, 30, 51, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, haloR * 1.25, haloR * 0.85, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 3 overlapping organic Prussian Blue ink ellipses
+        for (let l = 0; l < lobes.length; l++) {
+          const lobe = lobes[l];
+          const rx = lobe.rx * (0.25 + 0.75 * ease);
+          const ry = lobe.ry * (0.25 + 0.75 * ease);
+          const ox = lobe.ox * ease;
+          const oy = lobe.oy * ease;
+          ctx.fillStyle = l === 0 ? 'rgba(17, 30, 51, 0.62)' : 'rgba(28, 40, 68, 0.45)';
+          ctx.beginPath();
+          ctx.ellipse(ox, oy, rx, ry, lobe.rot, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Wet Mud Footprints (persist 4.5s along Sungai Belum Riverbank & Infected Ravine)
+     */
+    _drawFootprints(ctx, state) {
+      const prints = state.footprints || [];
+      for (let i = 0; i < prints.length; i++) {
+        const fp = prints[i];
+        const alpha = Math.max(0, 1 - fp.age / fp.duration) * 0.42;
+        ctx.save();
+        ctx.translate(fp.x, fp.y);
+        ctx.rotate(fp.angle || 0);
+        ctx.fillStyle = `rgba(17, 30, 51, ${alpha.toFixed(3)})`;
+        // Sole + heel boot print
+        ctx.beginPath();
+        ctx.ellipse(3, 0, 5.2, 2.7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(-4, 0, 2.6, 2.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Fluttering Ink Leaf Specks spawned when brushing through ferns & bamboo
+     */
+    _drawLeafParticles(ctx, state) {
+      const leaves = state.leafParticles || [];
+      for (let i = 0; i < leaves.length; i++) {
+        const lf = leaves[i];
+        const alpha = Math.max(0, 1 - lf.age / lf.duration);
+        ctx.save();
+        ctx.translate(lf.x, lf.y);
+        ctx.rotate(lf.rot);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#2E4062';
+        ctx.strokeStyle = '#111E33';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 5, 2.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Dynamic Fog-of-War Blueprint Hatching
+     * Diagonal Prussian blue blueprint hatching over occluded bunker interior / unseen extraction bay
+     */
+    _drawBlueprintFogOfWar(ctx, state) {
+      if (!state.level || !state.player) return;
+      const p = state.player;
+      const zones = [
+        // Sector 4 interior behind Blast Gate (reveals as gate opens or player enters culvert/gate)
+        {
+          x: 3915,
+          y: 265,
+          w: 270,
+          h: 820,
+          revealed: state.level.blastGateOpen || p.centerX > 3820
+        },
+        // Sector 2 Barracks interior shadow hatch until player approaches closely
+        {
+          x: 1140,
+          y: 210,
+          w: 280,
+          h: 150,
+          revealed: Math.hypot(p.centerX - 1280, p.centerY - 360) < 190
+        },
+        // Sector 2 Field Lab shadow hatch until player approaches
+        {
+          x: 1580,
+          y: 195,
+          w: 250,
+          h: 150,
+          revealed: Math.hypot(p.centerX - 1705, p.centerY - 350) < 190
+        }
+      ];
+
+      for (let z = 0; z < zones.length; z++) {
+        const fz = zones[z];
+        if (fz.revealed) continue;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(fz.x, fz.y, fz.w, fz.h);
+        ctx.clip();
+        ctx.fillStyle = 'rgba(28, 40, 68, 0.14)';
+        ctx.fillRect(fz.x, fz.y, fz.w, fz.h);
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.28)';
+        ctx.lineWidth = 1.2;
+        const step = 14;
+        for (let d = -fz.h; d < fz.w + fz.h; d += step) {
+          ctx.beginPath();
+          ctx.moveTo(fz.x + d, fz.y);
+          ctx.lineTo(fz.x + d - fz.h, fz.y + fz.h);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    /**
+     * AAA Diegetic Calligraphy Action Badge floating directly above nearby interactable / takedown target (75px)
+     */
+    _drawDiegeticBadge(ctx, state) {
+      const badge = state.diegeticBadge;
+      if (!badge || !badge.text) return;
+
+      const bob = Math.sin(this.time * 5.2) * 3;
+      const bx = badge.x;
+      const by = badge.y - (badge.urgent ? 64 : 44) + bob;
+
+      ctx.save();
+      ctx.font = 'bold 11px "Courier New", monospace';
+      const tw = ctx.measureText(badge.text).width;
+      const padX = 10;
+      const w = tw + padX * 2;
+      const h = 24;
+
+      // Calligraphic parchment ribbon
+      ctx.fillStyle = badge.urgent ? '#111E33' : '#F7F3E8';
+      ctx.strokeStyle = badge.urgent ? '#F85A5A' : '#111E33';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(bx - w * 0.5, by - h * 0.5, w, h, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      // Pointer nib beneath badge
+      ctx.beginPath();
+      ctx.moveTo(bx - 5, by + h * 0.5);
+      ctx.lineTo(bx, by + h * 0.5 + 6);
+      ctx.lineTo(bx + 5, by + h * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = badge.urgent ? '#F7F3E8' : '#111E33';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(badge.text, bx, by + 0.5);
+      ctx.restore();
+    }
+
     _drawTerrain(ctx, level, cam) {
-      // Sector bands & ink-hatched environmental flooring
       const sectors = level.sectors || [];
       for (let i = 0; i < sectors.length; i++) {
         const s = sectors[i];
@@ -4384,21 +4988,18 @@ window.__resolveBelumAsset = function(p) {
         ctx.fillStyle = s.groundTint || PALETTE.paperWarm;
         ctx.fillRect(s.x, s.y, s.width, s.height);
 
-        // Sector ink divider etching
         ctx.strokeStyle = 'rgba(17, 30, 51, 0.18)';
         ctx.setLineDash([8, 6]);
         ctx.lineWidth = 1.5;
         ctx.strokeRect(s.x, s.y, s.width, s.height);
         ctx.setLineDash([]);
 
-        // Engraved map watermark
         ctx.fillStyle = 'rgba(17, 30, 51, 0.14)';
         ctx.font = 'bold 14px "Courier New", monospace';
         ctx.fillText(s.label || '', s.x + 24, s.y + 34);
         ctx.restore();
       }
 
-      // Riverbank water current on left edge (Sungai Belum)
       if (level.riverZone) {
         const rz = level.riverZone;
         if (this._isVisible(rz.x, rz.y, rz.width, rz.height, cam)) {
@@ -4414,7 +5015,6 @@ window.__resolveBelumAsset = function(p) {
             ctx.quadraticCurveTo(rz.x + rz.width * 0.5 + wave, y + 8, rz.x + rz.width - 12, y - 3);
             ctx.stroke();
           }
-          // Muddy shoreline hatch
           ctx.strokeStyle = PALETTE.inkMid;
           ctx.lineWidth = 2.5;
           ctx.beginPath();
@@ -4425,7 +5025,6 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Dirt trail & Sector pathways
       if (Array.isArray(level.paths)) {
         ctx.save();
         for (let i = 0; i < level.paths.length; i++) {
@@ -4441,7 +5040,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.restore();
       }
 
-      // Culvert flooded drainage channel (Sector 4 Stealth Option A)
       if (level.culvertZone) {
         const cz = level.culvertZone;
         ctx.save();
@@ -4456,7 +5054,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.restore();
       }
 
-      // Extraction threshold zone beyond Blast Gate
       if (level.extractionZone) {
         const ez = level.extractionZone;
         ctx.save();
@@ -4481,7 +5078,6 @@ window.__resolveBelumAsset = function(p) {
     _drawGroundZones(ctx, state) {
       if (!state.level) return;
 
-      // Toxic Rafflesia Spore Zones (Soft radial crimson haze)
       const spores = state.level.sporeZones || [];
       for (let i = 0; i < spores.length; i++) {
         const sp = spores[i];
@@ -4497,7 +5093,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
         ctx.fill();
 
-        // Ink Rafflesia flower petals in center
         ctx.strokeStyle = PALETTE.inkDeep;
         ctx.fillStyle = 'rgba(248, 90, 90, 0.65)';
         ctx.lineWidth = 1.6;
@@ -4515,7 +5110,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.restore();
       }
 
-      // Floodlights (Sector 2 & 4 - disabled if generator sabotaged)
       const lights = state.level.floodlights || [];
       for (let i = 0; i < lights.length; i++) {
         const fl = lights[i];
@@ -4538,7 +5132,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.restore();
       }
 
-      // Red Laser Tripwires (Sector 4)
       const lasers = state.level.tripwires || [];
       for (let i = 0; i < lasers.length; i++) {
         const lw = lasers[i];
@@ -4590,7 +5183,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.lineWidth = 1.2;
         ctx.stroke();
 
-        // Thin crimson rifle laser sight
         const laserLen = m.state === 'ALERT' ? range * 1.15 : range * 0.72;
         ctx.strokeStyle = m.state === 'ALERT' ? 'rgba(255, 32, 48, 0.85)' : 'rgba(248, 90, 90, 0.55)';
         ctx.lineWidth = m.state === 'ALERT' ? 1.8 : 1.1;
@@ -4602,9 +5194,6 @@ window.__resolveBelumAsset = function(p) {
       }
     }
 
-    /**
-     * Soft radial crimson telegraph matching Section 2.1 & 7.4 (feathered edge #F85A5A)
-     */
     _drawTelegraphs(ctx, state) {
       const boars = state.boars || [];
       for (let i = 0; i < boars.length; i++) {
@@ -4618,7 +5207,6 @@ window.__resolveBelumAsset = function(p) {
           const radius = 26 + (maxRadius - 26) * progress;
 
           ctx.save();
-          // Feathered radial crimson aura
           const grad = ctx.createRadialGradient(cx, cy, radius * 0.12, cx, cy, radius);
           grad.addColorStop(0, 'rgba(248, 90, 90, 0.52)');
           grad.addColorStop(0.6, 'rgba(248, 90, 90, 0.30)');
@@ -4628,14 +5216,12 @@ window.__resolveBelumAsset = function(p) {
           ctx.ellipse(cx, cy, radius, radius * 0.72, 0, 0, Math.PI * 2);
           ctx.fill();
 
-          // Expanding outer crimson warning ring
           ctx.strokeStyle = 'rgba(248, 90, 90, 0.82)';
           ctx.lineWidth = 2;
           ctx.beginPath();
           ctx.ellipse(cx, cy, radius * 0.92, radius * 0.66, 0, 0, Math.PI * 2);
           ctx.stroke();
 
-          // Charge lane preview vector during telegraph
           if (b.state === 'TELEGRAPH') {
             ctx.strokeStyle = 'rgba(248, 90, 90, 0.55)';
             ctx.lineWidth = 3;
@@ -4680,13 +5266,11 @@ window.__resolveBelumAsset = function(p) {
         ctx.save();
         ctx.translate(it.x, it.y + bob);
 
-        // Ink shadow
         ctx.fillStyle = 'rgba(17, 30, 51, 0.16)';
         ctx.beginPath();
         ctx.ellipse(0, 12 - bob, 16, 7, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Hand-drawn parchment tag / crate icon
         ctx.fillStyle = it.highlight ? '#FFE3E3' : PALETTE.paperWarm;
         ctx.strokeStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
         ctx.lineWidth = 2;
@@ -4700,7 +5284,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.textAlign = 'center';
         ctx.fillText(it.badge || 'ITEM', 0, 2);
 
-        // Label below
         ctx.fillStyle = PALETTE.inkMid;
         ctx.font = 'bold 10px "Courier New", monospace';
         ctx.fillText(it.label || '', 0, -20);
@@ -4743,7 +5326,6 @@ window.__resolveBelumAsset = function(p) {
         ctx.globalAlpha = alpha;
         ctx.font = ft.bold ? '900 22px "Georgia", serif' : 'bold 14px "Courier New", monospace';
         ctx.textAlign = 'center';
-        // Parchment halo outline so numbers pop cleanly
         ctx.lineWidth = 4;
         ctx.strokeStyle = PALETTE.paperBase;
         ctx.strokeText(ft.text, ft.x, ft.y);
@@ -4811,6 +5393,7 @@ window.__resolveBelumAsset = function(p) {
       this.dayTimeTextEl = document.getElementById('day-time-text');
       this.stealthPillEl = document.getElementById('stealth-status-pill');
       this.sectorBannerEl = document.getElementById('sector-banner');
+      this.btnAudioStatus = document.getElementById('btn-audio-status');
       this.blastTimerBannerEl = document.getElementById('blast-timer-banner');
       this.blastTimerSecEl = document.getElementById('blast-timer-sec');
       this.toastEl = document.getElementById('hud-toast');
@@ -4872,6 +5455,11 @@ window.__resolveBelumAsset = function(p) {
       if (this.btnGoHome) {
         this.btnGoHome.addEventListener('click', () => {
           if (this.cb.onOpenCamp) this.cb.onOpenCamp();
+        });
+      }
+      if (this.btnAudioStatus) {
+        this.btnAudioStatus.addEventListener('click', () => {
+          if (this.cb.onAudioBadgeClick) this.cb.onAudioBadgeClick();
         });
       }
 
@@ -5046,9 +5634,14 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Active sector banner
+      // Active sector banner & persistent audio badge
       if (this.sectorBannerEl && state.currentSectorLabel) {
         this.sectorBannerEl.textContent = state.currentSectorLabel;
+      }
+      if (this.btnAudioStatus && state.audioStatusLabel) {
+        this.btnAudioStatus.textContent = state.audioStatusLabel;
+        this.btnAudioStatus.classList.toggle('active', !!state.audioActive);
+        this.btnAudioStatus.classList.toggle('pulsing', !state.audioActive);
       }
 
       // Blast door 15-second survival countdown
@@ -5413,8 +6006,12 @@ window.__resolveBelumAsset = function(p) {
         this.overlay.classList.add('hidden');
       }
       if (this.sound) {
-        this.sound.init();
-        this.sound.startAmbience();
+        if (typeof this.sound.unlock === 'function') {
+          this.sound.unlock();
+        } else {
+          this.sound.init();
+          this.sound.startAmbience();
+        }
         this.sound.playThunder(0.55);
       }
       if (typeof this.onBeginOperation === 'function') {
@@ -5432,9 +6029,19 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/main.js === */
-// src/main.js - Belum: Protocol Zero (Act 1) Master Game Loop, State Machine & Combat Coordinator
+// src/main.js - Belum: Protocol Zero (Act 1) AAA Polish Master Game Loop & State Coordinator
+// Includes: 45ms Combat Hit-Stop, Ink-Bleed Puddles, Directional Trauma, Haptics, Foliage Rustle,
+// Wet Mud Footprints, Boar Matador Wall-Stun, Diegetic Calligraphy Badges & Sector Checkpoint Auto-Save.
 (function (global) {
   'use strict';
+
+  const CHECKPOINT_KEY = 'belum_checkpoint';
+  const SECTOR_SPAWNS = {
+    1: { x: 185, y: 645 },
+    2: { x: 1110, y: 640 },
+    3: { x: 2205, y: 650 },
+    4: { x: 3255, y: 640 }
+  };
 
   class BelumProtocolZeroGame {
     constructor() {
@@ -5443,6 +6050,7 @@ window.__resolveBelumAsset = function(p) {
       this.mode = 'PROLOGUE'; // 'PROLOGUE' | 'PLAYING' | 'CAMP' | 'VICTORY' | 'GAME_OVER'
       this.lastTs = 0;
       this.rafId = null;
+      this.hitStopTimer = 0;
 
       // Core subsystems
       this.sound = this.ns.SoundEngine ? new this.ns.SoundEngine() : null;
@@ -5451,7 +6059,10 @@ window.__resolveBelumAsset = function(p) {
       this.input = this.ns.InputManager
         ? new this.ns.InputManager(this.canvas, {
             onToggleMute: () => this._toggleMute(),
-            onOpenDossier: () => this.hud && this.hud.openUtility('dossier')
+            onOpenDossier: () => this.hud && this.hud.openUtility('dossier'),
+            onUserGesture: () => {
+              if (this.sound) this.sound.unlock();
+            }
           })
         : null;
 
@@ -5462,11 +6073,13 @@ window.__resolveBelumAsset = function(p) {
             },
             onCraftSuccess: () => {
               if (this.sound) this.sound.playDecoyClatter();
+              this._saveSectorCheckpoint(this.currentSectorId, true);
             },
             onDriveDecrypted: (entry) => {
               this.stats.drivesDecrypted++;
               if (this.sound) this.sound.playRadioAlert();
               if (this.hud) this.hud.showToast(`DECRYPTED: ${entry.title}`, 3.5);
+              this._saveSectorCheckpoint(this.currentSectorId, true);
             }
           })
         : null;
@@ -5476,6 +6089,7 @@ window.__resolveBelumAsset = function(p) {
             onOpenCamp: () => this.tryOpenCamp(),
             onSelectWeapon: (wid) => this._selectWeapon(wid),
             onToggleMute: () => this._toggleMute(),
+            onAudioBadgeClick: () => this._handleAudioBadgeClick(),
             getSnapshot: () => ({
               player: this.player,
               audioMuted: this.sound ? this.sound.muted : false
@@ -5497,6 +6111,49 @@ window.__resolveBelumAsset = function(p) {
       this._startLoop();
     }
 
+    _vibrate(pattern) {
+      if (this.ns.InputManager && typeof this.ns.InputManager.vibrate === 'function') {
+        this.ns.InputManager.vibrate(pattern);
+      }
+    }
+
+    triggerHitStop(durationMs) {
+      const ms = Number.isFinite(durationMs) ? durationMs : 45;
+      this.hitStopTimer = Math.max(this.hitStopTimer, ms / 1000.0);
+    }
+
+    _spawnInkPuddle(x, y, baseRadius) {
+      const r = baseRadius || 30;
+      this.inkPuddles.push({
+        x,
+        y,
+        baseRadius: r,
+        age: 0,
+        growDuration: 2.4,
+        lobes: [
+          { rx: r, ry: r * 0.62, ox: 0, oy: 0, rot: (Math.random() - 0.5) * 0.5 },
+          { rx: r * 0.72, ry: r * 0.48, ox: (Math.random() - 0.5) * r * 0.9, oy: (Math.random() - 0.5) * r * 0.45, rot: Math.random() * Math.PI },
+          { rx: r * 0.58, ry: r * 0.38, ox: (Math.random() - 0.5) * r * 1.1, oy: (Math.random() - 0.5) * r * 0.55, rot: Math.random() * Math.PI }
+        ]
+      });
+    }
+
+    _spawnLeafSpecks(x, y, count) {
+      const n = count || 3;
+      for (let i = 0; i < n; i++) {
+        this.leafParticles.push({
+          x: x + (Math.random() - 0.5) * 28,
+          y: y + (Math.random() - 0.5) * 18,
+          vx: (Math.random() - 0.5) * 44,
+          vy: -28 - Math.random() * 28,
+          rot: Math.random() * Math.PI * 2,
+          vrot: (Math.random() - 0.5) * 8,
+          age: 0,
+          duration: 0.75 + Math.random() * 0.35
+        });
+      }
+    }
+
     _bindEndgameAndResize() {
       if (typeof window === 'undefined' || typeof document === 'undefined') return;
       const onResize = () => {
@@ -5508,14 +6165,87 @@ window.__resolveBelumAsset = function(p) {
       window.addEventListener('resize', onResize);
       onResize();
 
+      const btnRetrySector = document.getElementById('btn-retry-sector');
+      if (btnRetrySector) {
+        btnRetrySector.addEventListener('click', () => {
+          const modal = document.getElementById('endgame-modal');
+          if (modal) modal.classList.add('hidden');
+          this.retryFromCheckpoint();
+        });
+      }
+
       const btnRestart = document.getElementById('btn-restart-game');
       if (btnRestart) {
         btnRestart.addEventListener('click', () => {
           const modal = document.getElementById('endgame-modal');
           if (modal) modal.classList.add('hidden');
+          this._clearCheckpoint();
           this.resetAct1();
           this.startGameplay();
         });
+      }
+    }
+
+    _saveSectorCheckpoint(sectorId, silent) {
+      if (!this.player || typeof localStorage === 'undefined') return;
+      try {
+        const data = {
+          sector: sectorId || 1,
+          spawn: SECTOR_SPAWNS[sectorId] || SECTOR_SPAWNS[1],
+          activeWeapon: this.player.activeWeapon,
+          unlockedWeapons: Object.assign({}, this.player.unlockedWeapons),
+          ammo: Object.assign({}, this.player.ammo),
+          inventory: JSON.parse(JSON.stringify(this.player.inventory))
+        };
+        localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
+        if (!silent && this.hud) {
+          this.hud.showToast(`CHECKPOINT SAVED // SECTOR ${sectorId}`, 2.4);
+        }
+      } catch (_) {
+        // Ignore storage quota / private mode errors
+      }
+    }
+
+    _loadCheckpoint() {
+      if (typeof localStorage === 'undefined') return null;
+      try {
+        const raw = localStorage.getItem(CHECKPOINT_KEY);
+        return raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    _clearCheckpoint() {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        localStorage.removeItem(CHECKPOINT_KEY);
+      } catch (_) {}
+    }
+
+    retryFromCheckpoint() {
+      const cp = this._loadCheckpoint();
+      this.resetAct1();
+      if (cp && this.player) {
+        const sp = cp.spawn || SECTOR_SPAWNS[cp.sector] || SECTOR_SPAWNS[1];
+        this.player.x = sp.x;
+        this.player.y = sp.y;
+        this.player.hp = this.player.maxHp;
+        this.player.stamina = this.player.maxStamina;
+        if (cp.unlockedWeapons) this.player.unlockedWeapons = Object.assign({}, this.player.unlockedWeapons, cp.unlockedWeapons);
+        if (cp.ammo) this.player.ammo = Object.assign({}, this.player.ammo, cp.ammo);
+        if (cp.inventory) this.player.inventory = Object.assign({}, this.player.inventory, cp.inventory);
+        if (cp.activeWeapon && this.player.unlockedWeapons[cp.activeWeapon]) {
+          this.player.activeWeapon = cp.activeWeapon;
+        }
+        this.currentSectorId = cp.sector || 1;
+        this.highestSavedSector = this.currentSectorId;
+        if (this.camera) this.camera.snapTo(this.player.centerX, this.player.centerY);
+      }
+      this.mode = 'PLAYING';
+      if (this.hud) {
+        this.hud.show();
+        this.hud.showToast(`RESPAWNED AT SECTOR ${this.currentSectorId} CHECKPOINT`, 2.8);
       }
     }
 
@@ -5531,12 +6261,22 @@ window.__resolveBelumAsset = function(p) {
       this.acousticRings = [];
       this.floatingTexts = [];
       this.slashEffects = [];
+      this.inkPuddles = [];
+      this.footprints = [];
+      this.leafParticles = [];
+      this.diegeticBadge = null;
 
       this.elapsedSec = 0;
+      this.hitStopTimer = 0;
       this.inCombat = false;
+      this.currentSectorId = 1;
+      this.highestSavedSector = 1;
       this.currentSectorLabel = 'SECTOR 1 // SUNGAI BELUM RIVERBANK';
       this.interactHint = '';
       this.klaxonTimer = 0;
+      this.footprintDistAccum = 0;
+      this.footprintStepSide = 1;
+      this.lastPlayerPos = { x: sx, y: sy };
 
       this.stats = {
         stealthTakedowns: 0,
@@ -5554,9 +6294,22 @@ window.__resolveBelumAsset = function(p) {
 
     startGameplay() {
       this.mode = 'PLAYING';
+      if (this.sound) this.sound.unlock();
+      this._saveSectorCheckpoint(1, true);
       if (this.hud) {
         this.hud.show();
         this.hud.showToast('INSERTION COMPLETE — STAY LOW IN FERNS & BEHIND LOGS', 3.5);
+      }
+    }
+
+    _handleAudioBadgeClick() {
+      if (!this.sound) return;
+      if (!this.sound.ctx || this.sound.ctx.state !== 'running') {
+        this.sound.muted = false;
+        this.sound.unlock();
+        if (this.hud) this.hud.showToast('AUDIO ACTIVE — RAIN & CICADAS ONLINE', 1.8);
+      } else {
+        this._toggleMute();
       }
     }
 
@@ -5599,7 +6352,13 @@ window.__resolveBelumAsset = function(p) {
         this.lastTs = ts;
 
         if (this.mode === 'PLAYING') {
-          this.update(dt);
+          if (this.hitStopTimer > 0) {
+            // AAA 45ms Combat Hit-Stop: freeze entity logic while maintaining camera shake & particle rendering
+            this.hitStopTimer = Math.max(0, this.hitStopTimer - dt);
+            if (this.camera) this.camera.updateShakeOnly(dt);
+          } else {
+            this.update(dt);
+          }
         }
 
         if (this.renderer) {
@@ -5624,6 +6383,10 @@ window.__resolveBelumAsset = function(p) {
         acousticRings: this.acousticRings,
         floatingTexts: this.floatingTexts,
         slashEffects: this.slashEffects,
+        inkPuddles: this.inkPuddles,
+        footprints: this.footprints,
+        leafParticles: this.leafParticles,
+        diegeticBadge: this.diegeticBadge,
         camera: this.camera
       };
     }
@@ -5652,6 +6415,8 @@ window.__resolveBelumAsset = function(p) {
         inCombat: this.inCombat,
         currentSectorLabel: this.currentSectorLabel,
         interactHint: this.interactHint,
+        audioActive: this.sound ? this.sound.isActive() : false,
+        audioStatusLabel: this.sound ? this.sound.getStatusLabel() : '[TAP TO UNMUTE]',
         objectives: this._getObjectives()
       };
     }
@@ -5684,22 +6449,33 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // 2. Update Player
+      // 2. Update Player & AAA Spring Camera (with stealth/sprint zoom)
+      const prevX = this.player.centerX;
+      const prevY = this.player.centerY;
       this.player.update(dt, this.input, this.level);
       if (this.camera) {
-        this.camera.update(dt, this.player.centerX, this.player.centerY, this.input ? this.input.aimVector : null);
+        this.camera.update(
+          dt,
+          this.player.centerX,
+          this.player.centerY,
+          this.input ? this.input.aimVector : null,
+          this.player
+        );
       }
 
-      // 3. Sector Detection & Environmental Hazards (Rafflesia Spores, Floodlights, Tripwires)
+      // 3. Living Environmental Reactivity: Foliage Rustle & Wet Mud Footprints
+      this._updateEnvironmentReactivity(dt, prevX, prevY);
+
+      // 4. Sector Detection, Auto-Checkpoint & Hazards
       this._updateSectorAndHazards(dt);
 
-      // 4. AI Updates (Mercenaries + Mutated Boars + Faction Infighting)
+      // 5. AI Updates (Mercenaries + Mutated Boars + Faction Infighting + Wall-Stun)
       const aiEvents = {
         onRadioAlert: (merc) => {
           this.stats.alertsTriggered++;
+          this._vibrate([30, 50]);
           if (this.sound) this.sound.playRadioAlert();
           this._spawnFloat(merc.centerX, merc.y - 24, 'CONTACT!', '#F85A5A', false);
-          // Nearby guards within 360px investigate radio call
           for (let j = 0; j < this.mercenaries.length; j++) {
             const ally = this.mercenaries[j];
             if (!ally.dead && ally !== merc && Math.hypot(ally.centerX - merc.centerX, ally.centerY - merc.centerY) < 360) {
@@ -5730,6 +6506,7 @@ window.__resolveBelumAsset = function(p) {
         },
         onMercKilled: (merc) => {
           this.stats.enemiesNeutralized++;
+          this._spawnInkPuddle(merc.centerX, merc.y + merc.height - 6, merc.role === 'commander' ? 40 : 30);
           if (merc.role === 'commander') {
             this.player.inventory.hasKeycard = true;
             if (this.hud) this.hud.showToast('COMMANDER WARD ELIMINATED — TIER-1 CLEARANCE SECURED!', 3.2);
@@ -5739,28 +6516,60 @@ window.__resolveBelumAsset = function(p) {
           if (this.sound) this.sound.playBoarRoar();
           this._spawnFloat(boar.centerX, boar.y - 16, '!!', '#F85A5A', true);
         },
-        onBoarCharge: () => {
-          if (this.camera) this.camera.addShake(5, 0.25);
+        onBoarCharge: (boar) => {
+          if (this.camera) this.camera.addTrauma(0.32, boar.chargeDirX, boar.chargeDirY);
         },
-        onBoarImpact: (victim, dmg, label) => {
-          if (this.camera) this.camera.addShake(9, 0.3);
+        onBoarImpact: (victim, dmg, label, boar) => {
+          this.triggerHitStop(45);
+          this._vibrate([40, 60, 80]);
+          const dx = boar ? victim.centerX - boar.centerX : 1;
+          const dy = boar ? victim.centerY - boar.centerY : 0;
+          if (this.camera) this.camera.addTrauma(0.75, dx, dy);
+          if (this.sound) this.sound.playBoarImpact();
           this._spawnFloat(victim.centerX, victim.y - 12, label || String(dmg), '#F85A5A', true);
           if (victim.faction === 'MERC') {
             this.stats.factionInfightingHits++;
             if (this.hud) this.hud.showToast('FACTION INFIGHTING: MUTATED BOAR GORED IRONCLAD PMC!', 2.6);
           }
         },
+        onBoarWallStun: (boar) => {
+          // AAA Matador Wall-Crash Concussion!
+          this.triggerHitStop(45);
+          this._vibrate([40, 60, 80]);
+          if (this.camera) this.camera.addTrauma(0.8, -boar.chargeDirX, -boar.chargeDirY);
+          if (this.sound) this.sound.playBoarImpact();
+          this._spawnFloat(boar.centerX, boar.y - 18, 'CONCUSSED! (2.6s)', '#F85A5A', true);
+          if (this.hud) this.hud.showToast('MATADOR STUN: BOAR SLAMMED INTO WALL!', 2.4);
+        },
         onBoarKilled: (boar) => {
+          this._spawnInkPuddle(boar.centerX, boar.y + boar.height - 6, 38);
           this._spawnFloat(boar.centerX, boar.y - 14, 'BOAR SLAIN', '#111E33', false);
         }
       };
 
       let anyAlert = false;
+      let nearestAlertDist = Infinity;
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         m.update(dt, this.player, this.boars, this.level, aiEvents);
-        if (!m.dead && m.state === 'ALERT' && Math.hypot(m.centerX - this.player.centerX, m.centerY - this.player.centerY) < 750) {
-          anyAlert = true;
+        if (!m.dead) {
+          const distToPlayer = Math.hypot(m.centerX - this.player.centerX, m.centerY - this.player.centerY);
+          if (m.state === 'ALERT' && distToPlayer < 750) {
+            anyAlert = true;
+            if (distToPlayer < nearestAlertDist) nearestAlertDist = distToPlayer;
+          }
+          // AAA Stealth Detail: Mercenaries crossing fresh mud footprints get +20% suspicion & turn to inspect
+          if (m.state === 'PATROL' && this.footprints.length > 0) {
+            for (let f = this.footprints.length - 1; f >= 0; f--) {
+              const fp = this.footprints[f];
+              if (!fp.inspected && Math.hypot(m.centerX - fp.x, m.centerY - fp.y) < 46) {
+                fp.inspected = true;
+                m.inspectFootprint(fp.x, fp.y, fp.angle);
+                this._spawnFloat(m.centerX, m.y - 18, 'TRACKS?', '#111E33', false);
+                break;
+              }
+            }
+          }
         }
       }
       for (let i = 0; i < this.boars.length; i++) {
@@ -5768,25 +6577,74 @@ window.__resolveBelumAsset = function(p) {
       }
       this.inCombat = anyAlert || this.level.blastGateOpening;
 
-      // 5. Update Projectiles & Collisions
+      // 6. Update Projectiles & Collisions
       this._updateProjectiles(dt, aiEvents);
 
-      // 6. Update Blast Gate 15-Second Opening Sequence & Victory Check
+      // 7. Update Blast Gate 15-Second Opening Sequence & Victory Check
       this._updateBlastGateAndExtraction(dt, aiEvents);
 
-      // 7. Update Visual FX (Acoustic rings, slashes, floating damage numbers)
+      // 8. Update Visual FX (Ink Puddles, Footprints, Leaf Specks, Acoustic Rings, Slashes, Floats)
       this._updateVisualFx(dt);
 
-      // 8. Compute Context Interaction Hint
-      this.interactHint = this._computeInteractHint();
+      // 9. Compute Diegetic Calligraphic Action Badge & HUD Prompt
+      this._computeInteractAndDiegeticBadge();
 
-      // 9. Procedural Audio Dynamic Tension Heartbeat
-      const isTense = this.inCombat || this.player.hp <= Math.ceil(this.player.maxHp * 0.3);
-      if (this.sound) this.sound.update(dt, isTense);
+      // 10. Dynamic Tension Audio Ducking (450Hz lowpass) & Accelerating Heartbeat
+      const isTense = this.inCombat || this.player.hp <= 3;
+      if (this.sound) this.sound.update(dt, isTense, nearestAlertDist);
 
-      // 10. Game Over Check
+      // 11. Game Over Check
       if (this.player.dead) {
         this._triggerEndgame(false);
+      }
+    }
+
+    _updateEnvironmentReactivity(dt, prevX, prevY) {
+      const p = this.player;
+      const obstacles = this.level.obstacles || [];
+
+      // Update obstacle rustle timers & check entity overlap with ferns/bamboo
+      for (let i = 0; i < obstacles.length; i++) {
+        const obs = obstacles[i];
+        if (typeof obs.update === 'function') obs.update(dt);
+        if (obs.type !== 'fern' && obs.type !== 'bamboo') continue;
+
+        const pad = obs.type === 'bamboo' ? 14 : 6;
+        // Player brushing foliage
+        if (
+          p.moving &&
+          p.centerX >= obs.x - pad &&
+          p.centerX <= obs.x + obs.width + pad &&
+          p.centerY >= obs.y &&
+          p.centerY <= obs.y + obs.height + pad
+        ) {
+          if (obs.triggerRustle(p.centerX - prevX || 1)) {
+            this._spawnLeafSpecks(p.centerX, p.centerY - 14, 3);
+            if (this.sound) this.sound.playLeafRustle();
+          }
+        }
+      }
+
+      // Wet Mud Footprints in Sector 1 (Riverbank) & Sector 3 (Infected Ravine)
+      const moved = Math.hypot(p.centerX - prevX, p.centerY - prevY);
+      const inMudZone = this.currentSectorId === 1 || this.currentSectorId === 3;
+      if (inMudZone && moved > 0.2) {
+        this.footprintDistAccum += moved;
+        if (this.footprintDistAccum >= 32) {
+          this.footprintDistAccum = 0;
+          this.footprintStepSide *= -1;
+          const moveAng = Math.atan2(p.centerY - prevY, p.centerX - prevX);
+          const perpX = -Math.sin(moveAng) * 5 * this.footprintStepSide;
+          const perpY = Math.cos(moveAng) * 5 * this.footprintStepSide;
+          this.footprints.push({
+            x: p.centerX + perpX,
+            y: p.y + p.height - 4 + perpY,
+            angle: moveAng,
+            age: 0,
+            duration: 4.5,
+            inspected: false
+          });
+        }
       }
     }
 
@@ -5797,6 +6655,7 @@ window.__resolveBelumAsset = function(p) {
       p.parangAnimTimer = 0.36;
       if (p.animParang) p.animParang.reset();
       if (this.sound) this.sound.playParangSlash();
+      this._vibrate(15);
 
       this.slashEffects.push({
         x: p.centerX,
@@ -5809,7 +6668,6 @@ window.__resolveBelumAsset = function(p) {
       });
 
       const reach = 78;
-      // Hit Mercenaries in 75px arc
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (m.dead) continue;
@@ -5822,13 +6680,19 @@ window.__resolveBelumAsset = function(p) {
           m.takeDamage(dmg, { x: p.centerX, y: p.centerY }, {
             onMercKilled: (killed) => {
               this.stats.enemiesNeutralized++;
+              this._spawnInkPuddle(killed.centerX, killed.y + killed.height - 6, killed.role === 'commander' ? 40 : 30);
               if (isStealthTakedown) this.stats.stealthTakedowns++;
               if (killed.role === 'commander') {
                 p.inventory.hasKeycard = true;
               }
             }
           });
+
+          // AAA Hit-Stop + Directional Trauma + Haptics
+          this.triggerHitStop(45);
+          if (this.camera) this.camera.addTrauma(isStealthTakedown ? 0.58 : 0.34, dx, dy);
           if (isStealthTakedown) {
+            this._vibrate([25, 40, 25]);
             this.slashEffects[this.slashEffects.length - 1].isStealth = true;
             this._spawnFloat(m.centerX, m.y - 16, 'SILENT TAKEDOWN', '#F85A5A', true);
           } else {
@@ -5837,13 +6701,19 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Hit Mutated Boars in 75px arc
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead) continue;
-        const dist = Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY);
-        if (dist <= reach + 10) {
-          const dmg = b.takeDamage(45, { x: p.centerX, y: p.centerY });
+        const dx = b.centerX - p.centerX;
+        const dy = b.centerY - p.centerY;
+        if (Math.hypot(dx, dy) <= reach + 10) {
+          const dmg = b.takeDamage(45, { x: p.centerX, y: p.centerY }, {
+            onBoarKilled: (killed) => {
+              this._spawnInkPuddle(killed.centerX, killed.y + killed.height - 6, 38);
+            }
+          });
+          this.triggerHitStop(45);
+          if (this.camera) this.camera.addTrauma(0.4, dx, dy);
           this._spawnFloat(b.centerX, b.y - 14, String(dmg), '#F85A5A', true);
         }
       }
@@ -5854,7 +6724,6 @@ window.__resolveBelumAsset = function(p) {
       const Proj = this.ns.Projectile;
       if (!p || !Proj || p.attackCooldown > 0) return;
 
-      // Auto-pick best ranged weapon if Parang currently active
       let weapon = p.activeWeapon;
       if (weapon === 'parang') {
         if (p.unlockedWeapons.crossbow && p.ammo.crossbow > 0) weapon = 'crossbow';
@@ -5874,6 +6743,7 @@ window.__resolveBelumAsset = function(p) {
         }
         p.ammo.crossbow--;
         p.attackCooldown = 0.55;
+        this._vibrate(15);
         if (this.sound) this.sound.playCrossbowTwang();
         this.projectiles.push(
           new Proj({
@@ -5894,8 +6764,9 @@ window.__resolveBelumAsset = function(p) {
         }
         p.ammo.pistol--;
         p.attackCooldown = 0.34;
+        this._vibrate(20);
         if (this.sound) this.sound.playSuppressedShot();
-        if (this.camera) this.camera.addShake(3, 0.12);
+        if (this.camera) this.camera.addTrauma(0.24, -Math.cos(ang), -Math.sin(ang));
         this.projectiles.push(
           new Proj({
             type: 'pistol9mm',
@@ -5908,7 +6779,6 @@ window.__resolveBelumAsset = function(p) {
             maxRange: 550
           })
         );
-        // Small 120px suppressed acoustic ring
         this._emitAcousticRing(p.centerX, p.centerY, 120, false);
       } else if (weapon === 'decoy') {
         if (p.ammo.decoy <= 0) {
@@ -5942,7 +6812,6 @@ window.__resolveBelumAsset = function(p) {
         color: provokesBoars ? 'rgba(248, 90, 90, 0.65)' : 'rgba(17, 30, 51, 0.45)'
       });
 
-      // Alert/lure nearby mercenaries
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (!m.dead && Math.hypot(m.centerX - x, m.centerY - y) <= radius) {
@@ -5950,16 +6819,14 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Provoke Mutated Boars! If mercenaries are near the ravine checkpoint, charge right down the ravine into them!
       if (provokesBoars) {
         for (let i = 0; i < this.boars.length; i++) {
           const b = this.boars[i];
           if (b.dead) continue;
           if (Math.hypot(b.centerX - x, b.centerY - y) <= radius + 140) {
-            // Pick closest mercenary within 460px to encourage natural faction infighting, else charge the clatter point
             let targetX = x;
             let targetY = y;
-            let bestDist = 460;
+            let bestDist = 520;
             for (let j = 0; j < this.mercenaries.length; j++) {
               const m = this.mercenaries[j];
               if (m.dead) continue;
@@ -5985,7 +6852,6 @@ window.__resolveBelumAsset = function(p) {
       const p = this.player;
       if (!p || !this.level) return;
 
-      // 1. Priority: Silent Rear Stealth Takedown on nearby unalerted Mercenary
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (m.dead || m.state === 'ALERT') continue;
@@ -5996,7 +6862,6 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // 2. Harvest Boar Meat from slain Mutated Boar
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead && !b.meatHarvested && Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY) <= 85) {
@@ -6008,12 +6873,11 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // 3. Level Pickups & Interactive Objectives
       const items = this.level.interactables || [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (it.collected) continue;
-        if (Math.hypot(it.x - p.centerX, it.y - p.centerY) > 74) continue;
+        if (Math.hypot(it.x - p.centerX, it.y - p.centerY) > 75) continue;
 
         if (it.type === 'weapon_parang') {
           it.collected = true;
@@ -6085,9 +6949,8 @@ window.__resolveBelumAsset = function(p) {
           this.level.blastGateOpening = true;
           this.level.blastGateTimer = 15.0;
           if (this.sound) this.sound.playAlarmKlaxon();
-          if (this.camera) this.camera.addShake(7, 0.5);
+          if (this.camera) this.camera.addTrauma(0.55, -1, 0);
           if (this.hud) this.hud.showToast('BLAST GATE OVERRIDE INITIATED — SURVIVE 15 SECONDS!', 4.0);
-          // Alert nearby Sector 4 guards
           for (let mIdx = 0; mIdx < this.mercenaries.length; mIdx++) {
             const m = this.mercenaries[mIdx];
             if (!m.dead && m.sector === 4) {
@@ -6100,29 +6963,41 @@ window.__resolveBelumAsset = function(p) {
       }
     }
 
-    _computeInteractHint() {
+    _computeInteractAndDiegeticBadge() {
       const p = this.player;
-      if (!p || !this.level) return '';
+      this.interactHint = '';
+      this.diegeticBadge = null;
+      if (!p || !this.level) return;
+
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (!m.dead && m.state !== 'ALERT' && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 78 && m.isBehindMe(p.centerX, p.centerY)) {
-          return '[E / HAND] SILENT PARANG TAKEDOWN';
+          this.interactHint = '[E / TAP] SILENT TAKEDOWN';
+          this.diegeticBadge = { x: m.centerX, y: m.y, text: '[E / TAP] SILENT TAKEDOWN', urgent: true };
+          return;
         }
       }
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead && !b.meatHarvested && Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY) <= 85) {
-          return '[E / HAND] HARVEST BOAR MEAT';
+          this.interactHint = '[E / TAP] HARVEST BOAR MEAT';
+          this.diegeticBadge = { x: b.centerX, y: b.y, text: '[E / TAP] HARVEST BOAR MEAT', urgent: false };
+          return;
         }
       }
       const items = this.level.interactables || [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        if (!it.collected && Math.hypot(it.x - p.centerX, it.y - p.centerY) <= 74) {
-          return `[E / HAND] ${it.label.toUpperCase()}`;
+        if (!it.collected && Math.hypot(it.x - p.centerX, it.y - p.centerY) <= 75) {
+          let label = `[E / TAP] ${it.label.toUpperCase()}`;
+          if (it.type === 'generator') label = '[E / TAP] SABOTAGE GENERATOR';
+          else if (it.type === 'blast_terminal') label = '[E / TAP] SWIPE TIER-1 KEYCARD';
+          else if (it.type === 'culvert_unlock') label = '[E / TAP] UNLOCK CULVERT HATCH';
+          this.interactHint = label;
+          this.diegeticBadge = { x: it.x, y: it.y, text: label, urgent: !!it.highlight };
+          return;
         }
       }
-      return '';
     }
 
     _updateProjectiles(dt, aiEvents) {
@@ -6152,7 +7027,6 @@ window.__resolveBelumAsset = function(p) {
         }
         if (pr.type === 'decoy_rock') continue;
 
-        // Player projectiles hit Mercenaries & Boars
         if (pr.faction === 'PLAYER') {
           let hit = false;
           for (let j = 0; j < this.mercenaries.length; j++) {
@@ -6161,6 +7035,7 @@ window.__resolveBelumAsset = function(p) {
             if (Math.hypot(pr.x - m.centerX, pr.y - (m.y + m.height * 0.5)) < 26) {
               const dealt = m.takeDamage(pr.damage, { x: this.player.centerX, y: this.player.centerY }, aiEvents);
               this._spawnFloat(m.centerX, m.y - 14, String(dealt), '#F85A5A', true);
+              if (m.dead) this.triggerHitStop(35);
               if (pr.retrievable) {
                 this.level.interactables.push({
                   id: `bolt_hit_${Date.now()}_${j}`,
@@ -6190,11 +7065,11 @@ window.__resolveBelumAsset = function(p) {
             }
           }
         } else if (pr.faction === 'MERC') {
-          // Mercenary bullets hit BOTH Player AND Mutated Boars (Faction Infighting)
           if (!this.player.dead && Math.hypot(pr.x - this.player.centerX, pr.y - (this.player.y + this.player.height * 0.5)) < 22) {
             const dealt = this.player.takeDamage(pr.damage);
             if (dealt > 0) {
-              if (this.camera) this.camera.addShake(6, 0.2);
+              this._vibrate([40, 60]);
+              if (this.camera) this.camera.addTrauma(0.55, pr.vx, pr.vy);
               this._spawnFloat(this.player.centerX, this.player.y - 12, `-${dealt} HP`, '#F85A5A', true);
             }
             pr.dead = true;
@@ -6219,16 +7094,21 @@ window.__resolveBelumAsset = function(p) {
     _updateSectorAndHazards(dt) {
       const p = this.player;
       const l = this.level;
-      // Active sector banner
       for (let i = 0; i < l.sectors.length; i++) {
         const s = l.sectors[i];
         if (p.centerX >= s.x && p.centerX < s.x + s.width) {
           this.currentSectorLabel = s.label;
+          if (s.id !== this.currentSectorId) {
+            this.currentSectorId = s.id;
+            if (s.id > this.highestSavedSector) {
+              this.highestSavedSector = s.id;
+              this._saveSectorCheckpoint(s.id, false);
+            }
+          }
           break;
         }
       }
 
-      // Toxic Rafflesia Spore Zones (Sector 3)
       let inSpore = false;
       for (let i = 0; i < l.sporeZones.length; i++) {
         const sp = l.sporeZones[i];
@@ -6243,6 +7123,7 @@ window.__resolveBelumAsset = function(p) {
           p.sporeTickTimer = 0;
           const dealt = p.takeDamage(1);
           if (dealt > 0) {
+            this._vibrate([40, 60]);
             this._spawnFloat(p.centerX, p.y - 12, 'BT-09 SPORE -1', '#F85A5A', false);
           }
         }
@@ -6250,7 +7131,6 @@ window.__resolveBelumAsset = function(p) {
         p.sporeTickTimer = 0;
       }
 
-      // Sector 4 Red Laser Tripwires
       for (let i = 0; i < l.tripwires.length; i++) {
         const lw = l.tripwires[i];
         if (!lw.active) continue;
@@ -6260,6 +7140,7 @@ window.__resolveBelumAsset = function(p) {
           p.centerY <= Math.max(lw.y1, lw.y2)
         ) {
           lw.active = false;
+          this._vibrate([30, 50]);
           if (this.sound) this.sound.playAlarmKlaxon();
           if (this.hud) this.hud.showToast('LASER TRIPWIRE TRIGGERED — SECTOR 4 ON ALERT!', 2.8);
           for (let mIdx = 0; mIdx < this.mercenaries.length; mIdx++) {
@@ -6285,7 +7166,6 @@ window.__resolveBelumAsset = function(p) {
         if (gateObs) {
           gateObs.openProgress = Math.min(1, 1 - l.blastGateTimer / 15.0);
         }
-        // Spawn 1 Ironclad responder midway through survival hold
         if (!l.reinforcementSpawned && l.blastGateTimer <= 9.0 && this.ns.Mercenary) {
           l.reinforcementSpawned = true;
           const resp = new this.ns.Mercenary({
@@ -6310,7 +7190,6 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Check Extraction Zone beyond open Blast Gate
       if (l.blastGateOpen && l.extractionZone) {
         const ez = l.extractionZone;
         if (p.centerX >= ez.x && p.centerX <= ez.x + ez.width && p.centerY >= ez.y && p.centerY <= ez.y + ez.height) {
@@ -6320,6 +7199,31 @@ window.__resolveBelumAsset = function(p) {
     }
 
     _updateVisualFx(dt) {
+      // Expanding permanent fountain-pen ink puddles (grow over 2.4s)
+      for (let i = 0; i < this.inkPuddles.length; i++) {
+        if (this.inkPuddles[i].age < this.inkPuddles[i].growDuration) {
+          this.inkPuddles[i].age += dt;
+        }
+      }
+      // Wet mud footprints (dissolve after 4.5s)
+      for (let i = this.footprints.length - 1; i >= 0; i--) {
+        this.footprints[i].age += dt;
+        if (this.footprints[i].age >= this.footprints[i].duration) {
+          this.footprints.splice(i, 1);
+        }
+      }
+      // Fluttering ink leaf specks
+      for (let i = this.leafParticles.length - 1; i >= 0; i--) {
+        const lf = this.leafParticles[i];
+        lf.age += dt;
+        lf.x += lf.vx * dt;
+        lf.y += lf.vy * dt;
+        lf.vy += 42 * dt; // gentle flutter gravity
+        lf.rot += lf.vrot * dt;
+        if (lf.age >= lf.duration) {
+          this.leafParticles.splice(i, 1);
+        }
+      }
       for (let i = this.acousticRings.length - 1; i >= 0; i--) {
         this.acousticRings[i].age += dt;
         if (this.acousticRings[i].age >= this.acousticRings[i].duration) {
@@ -6362,13 +7266,19 @@ window.__resolveBelumAsset = function(p) {
       const title = document.getElementById('endgame-title');
       const desc = document.getElementById('endgame-desc');
       const statsEl = document.getElementById('endgame-stats');
+      const btnRetry = document.getElementById('btn-retry-sector');
 
       if (stamp) stamp.textContent = victory ? 'OPERATION COMPLETE // ACT 1' : 'MIA // SIGNAL LOST';
       if (title) title.textContent = victory ? 'PERIMETER BLAST GATE BREACHED' : 'OPERATOR KANCIL DOWN';
       if (desc) {
         desc.textContent = victory
           ? 'Operator Kancil crossed the Temenggor Perimeter threshold into the surface warehouse complex above Facility Sub-Zero. Telemetry secured for Act 2.'
-          : 'Ironclad forces or BT-09 mutated fauna overwhelmed your position. Remember: stay hidden in dense ferns, behind hollow logs, and turn the wild boars against the mercenaries.';
+          : 'Ironclad forces or BT-09 mutated fauna overwhelmed your position. Stay low in dense ferns, bait boars into walls for a Matador stun, or retry from your last sector checkpoint.';
+      }
+      if (btnRetry) {
+        const hasCp = !victory && !!this._loadCheckpoint();
+        btnRetry.classList.toggle('hidden', !hasCp);
+        if (hasCp) btnRetry.textContent = `RETRY CURRENT SECTOR (SECTOR ${this.currentSectorId})`;
       }
       if (statsEl) {
         const mins = Math.floor(this.elapsedSec / 60);
