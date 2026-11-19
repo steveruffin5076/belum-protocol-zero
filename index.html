@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>BELUM: PROTOCOL ZERO — Operasi Hujan Hening (Act 1)</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23F7F3E8' stroke='%23111E33' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='8' fill='%23F85A5A' stroke='%23111E33' stroke-width='2'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-shell">
+    <!-- Master 2.5D Oblique Canvas -->
+    <canvas id="game-canvas" aria-label="Belum Protocol Zero Tactical Stealth Canvas"></canvas>
+
+    <!-- Aged Parchment Organic Vignette Frame -->
+    <div id="parchment-vignette" aria-hidden="true"></div>
+
+    <!-- IN-GAME HUD OVERLAY (Reference Layout Match) -->
+    <div id="hud-root" class="hud-hidden">
+      <!-- TOP-LEFT STATUS STACK -->
+      <div id="hud-top-left" class="hud-cluster">
+        <!-- Segmented Health Bar + Heart Emblem -->
+        <div class="stat-row" id="health-bar-row" title="Health Points">
+          <div class="stat-emblem emblem-heart" aria-hidden="true">
+            <svg viewBox="0 0 28 28" width="24" height="24">
+              <path d="M14 24 C14 24 4 17.2 4 10.4 C4 6.8 6.8 4.4 10 4.4 C12 4.4 13.3 5.5 14 6.8 C14.7 5.5 16 4.4 18 4.4 C21.2 4.4 24 6.8 24 10.4 C24 17.2 14 24 14 24 Z" fill="#F85A5A" stroke="#111E33" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M8.5 9.2 C9.3 7.8 10.8 7.5 11.6 8.2" fill="none" stroke="#F7F3E8" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="stat-bar-wrap">
+            <div id="health-segments" class="segmented-bar health-segments"></div>
+            <span id="health-text" class="stat-label">11/11 HP</span>
+          </div>
+        </div>
+
+        <!-- Segmented Stamina / Hydration Bar + Serpent Emblem -->
+        <div class="stat-row" id="stamina-bar-row" title="Stamina & Hydration">
+          <div class="stat-emblem emblem-stamina" aria-hidden="true">
+            <svg viewBox="0 0 28 28" width="24" height="24">
+              <path d="M7 21 C7 16 12 16 14 13 C16 10 21 11 21 7 C21 5.2 19.3 4.2 17.5 4.8 C15.2 5.5 14 7.5 12 9 C9.5 10.8 6.5 12 6.5 16.5" fill="none" stroke="#3E7C59" stroke-width="3.2" stroke-linecap="round"/>
+              <path d="M7 21 C7 16 12 16 14 13 C16 10 21 11 21 7" fill="none" stroke="#111E33" stroke-width="1.4" stroke-linecap="round"/>
+              <circle cx="19.5" cy="6.6" r="1.4" fill="#111E33"/>
+              <path d="M21.5 6.8 L24 5.8 M21.5 6.8 L24 7.8" stroke="#F85A5A" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="stat-bar-wrap">
+            <div id="stamina-segments" class="segmented-bar stamina-segments"></div>
+            <span id="stamina-text" class="stat-label">STAMINA</span>
+          </div>
+        </div>
+
+        <!-- Parchment Day / Time Ink Stamp Badge + Sun/Moon Dial -->
+        <div id="day-time-badge" class="ink-badge">
+          <div class="dial-icon" id="sun-moon-dial" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20">
+              <circle cx="12" cy="12" r="9.5" fill="#F4ECD8" stroke="#111E33" stroke-width="1.8"/>
+              <path d="M12 2.5 A9.5 9.5 0 0 1 12 21.5 Z" fill="#1C2844" opacity="0.22"/>
+              <circle cx="9" cy="10" r="2.6" fill="#F85A5A" stroke="#111E33" stroke-width="1.2"/>
+              <path d="M15.8 9.2 A3.2 3.2 0 1 0 15.8 14.8 A2.3 2.3 0 1 1 15.8 9.2 Z" fill="#111E33"/>
+            </svg>
+          </div>
+          <span id="day-time-text">Day 17 | 03:40 AM</span>
+        </div>
+
+        <!-- Active Stealth / Status Pill -->
+        <div id="stealth-status-pill" class="stealth-pill">EXPOSED</div>
+      </div>
+
+      <!-- TOP-CENTER SECTOR BANNER & ALERT / BLAST TIMER -->
+      <div id="hud-top-center">
+        <div id="sector-banner" class="sector-banner">SECTOR 1 // SUNGAI BELUM RIVERBANK</div>
+        <div id="blast-timer-banner" class="blast-timer hidden">
+          BLAST DOOR OPENING: <span id="blast-timer-sec">15.0</span>s — HOLD POSITION
+        </div>
+        <div id="hud-toast" class="hud-toast hidden"></div>
+      </div>
+
+      <!-- TOP-RIGHT UTILITIES & COLLAPSIBLE QUEST SCROLL -->
+      <div id="hud-top-right" class="hud-cluster">
+        <div class="utility-row">
+          <button id="btn-util-dossier" class="ink-square-btn" title="Journal / Dossier (J)" aria-label="Dossier">
+            <svg viewBox="0 0 28 28" width="22" height="22">
+              <rect x="5" y="4" width="18" height="20" rx="2" fill="#F7F3E8" stroke="#111E33" stroke-width="1.8"/>
+              <line x1="9" y1="9" x2="19" y2="9" stroke="#111E33" stroke-width="1.6"/>
+              <line x1="9" y1="13.5" x2="19" y2="13.5" stroke="#111E33" stroke-width="1.6"/>
+              <line x1="9" y1="18" x2="15" y2="18" stroke="#F85A5A" stroke-width="1.8"/>
+            </svg>
+          </button>
+          <button id="btn-util-backpack" class="ink-square-btn" title="Backpack (I)" aria-label="Backpack">
+            <svg viewBox="0 0 28 28" width="22" height="22">
+              <path d="M9 9 V7 C9 5 11 4 14 4 C17 4 19 5 19 7 V9" fill="none" stroke="#111E33" stroke-width="1.8"/>
+              <rect x="6" y="9" width="16" height="15" rx="3" fill="#F4ECD8" stroke="#111E33" stroke-width="1.8"/>
+              <rect x="9" y="14" width="10" height="6" rx="1.5" fill="none" stroke="#111E33" stroke-width="1.5"/>
+              <line x1="14" y1="14" x2="14" y2="17" stroke="#111E33" stroke-width="1.5"/>
+            </svg>
+          </button>
+          <button id="btn-util-weapons" class="ink-square-btn" title="Weapons & Loadout (1-4)" aria-label="Weapons">
+            <svg viewBox="0 0 28 28" width="22" height="22">
+              <path d="M6 22 L12 16 L21 5 C22.5 7 22 10.5 18 14.5 L14 18.5 L8 23 Z" fill="#F4ECD8" stroke="#111E33" stroke-width="1.8" stroke-linejoin="round"/>
+              <line x1="10" y1="15" x2="14" y2="19" stroke="#111E33" stroke-width="2"/>
+            </svg>
+          </button>
+          <button id="btn-util-settings" class="ink-square-btn" title="Settings & Audio (M)" aria-label="Settings">
+            <svg viewBox="0 0 28 28" width="22" height="22">
+              <circle cx="14" cy="14" r="4.2" fill="none" stroke="#111E33" stroke-width="1.8"/>
+              <path d="M14 4 V7 M14 21 V24 M4 14 H7 M21 14 H24 M7 7 L9.2 9.2 M18.8 18.8 L21 21 M21 7 L18.8 9.2 M9.2 18.8 L7 21" stroke="#111E33" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Collapsible Dark-Ink Quest Tracker Parchment Scroll -->
+        <div id="quest-scroll" class="quest-scroll">
+          <button id="quest-scroll-toggle" class="quest-scroll-header" aria-expanded="true">
+            <span class="scroll-title">OP: SILENT RAIN</span>
+            <span id="quest-scroll-chevron">▾</span>
+          </button>
+          <div id="quest-scroll-body" class="quest-scroll-body">
+            <ul id="quest-objectives-list"></ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- BOTTOM-LEFT MOVEMENT D-PAD & "GO HOME" BIVOUAC CABIN -->
+      <div id="hud-bottom-left" class="hud-cluster">
+        <div id="dpad-dial" class="dpad-dial" role="group" aria-label="Tactical Movement D-Pad">
+          <div class="dpad-ring"></div>
+          <div class="dpad-notch notch-n">▲</div>
+          <div class="dpad-notch notch-s">▼</div>
+          <div class="dpad-notch notch-w">◀</div>
+          <div class="dpad-notch notch-e">▶</div>
+          <div id="dpad-knob" class="dpad-knob">
+            <button id="btn-sprint-center" class="dpad-runner-btn" title="Hold / Tap to Sprint (Shift)" aria-label="Sprint">
+              <svg viewBox="0 0 28 28" width="22" height="22">
+                <circle cx="16.5" cy="6.5" r="2.2" fill="#111E33"/>
+                <path d="M12 11.5 L16 10.5 L19.5 13 M15.5 11 L13.5 16.5 L18 19 L17 23.5 M13.5 16.5 L9 20.5" fill="none" stroke="#111E33" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <button id="btn-go-home" class="go-home-btn" title="Go Home Bivouac Camp (B)">
+          <svg viewBox="0 0 42 36" width="38" height="32" aria-hidden="true">
+            <path d="M4 18 L21 5 L38 18" fill="none" stroke="#111E33" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M9 15 V31 H33 V15" fill="#F4ECD8" stroke="#111E33" stroke-width="2"/>
+            <rect x="17" y="21" width="8" height="10" fill="#1C2844" opacity="0.85"/>
+            <path d="M27 7 V12" stroke="#111E33" stroke-width="2.2"/>
+            <path d="M27 4 C28.5 2 31 2.5 30.5 5" fill="none" stroke="#1C2844" stroke-width="1.3" opacity="0.7"/>
+          </svg>
+          <span>Go Home</span>
+        </button>
+      </div>
+
+      <!-- BOTTOM-CENTER WEAPON STRIP & CONTEXT PROMPT -->
+      <div id="hud-bottom-center">
+        <div id="interact-prompt" class="interact-prompt hidden">[E] INTERACT</div>
+        <div id="weapon-bar" class="weapon-bar">
+          <button class="weapon-slot active" data-weapon="parang" title="1: Steel Parang">
+            <span class="slot-key">1</span>
+            <span class="slot-name">PARANG</span>
+            <span class="slot-ammo" id="ammo-parang">∞</span>
+          </button>
+          <button class="weapon-slot" data-weapon="crossbow" title="2: Crossbow">
+            <span class="slot-key">2</span>
+            <span class="slot-name">BOW</span>
+            <span class="slot-ammo" id="ammo-crossbow">0</span>
+          </button>
+          <button class="weapon-slot" data-weapon="pistol" title="3: Suppressed 9mm">
+            <span class="slot-key">3</span>
+            <span class="slot-name">9MM</span>
+            <span class="slot-ammo" id="ammo-pistol">0</span>
+          </button>
+          <button class="weapon-slot" data-weapon="decoy" title="4: Decoy Rock">
+            <span class="slot-key">4</span>
+            <span class="slot-name">ROCK</span>
+            <span class="slot-ammo" id="ammo-decoy">3</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- BOTTOM-RIGHT ACTION CLUSTER -->
+      <div id="hud-bottom-right" class="hud-cluster">
+        <div class="action-cluster">
+          <!-- Hand Icon: Interact / Stealth Takedown / Scavenge -->
+          <button id="btn-action-hand" class="action-btn action-hand" title="Interact / Stealth Takedown (E)" aria-label="Interact">
+            <svg viewBox="0 0 32 32" width="26" height="26">
+              <path d="M11 16 V9 C11 8 12.5 8 12.5 9 V15 M12.5 14 V7.5 C12.5 6.5 14.5 6.5 14.5 7.5 V14.5 M14.5 14 V8 C14.5 7 16.5 7 16.5 8 V15 M16.5 15 V10 C16.5 9 18.5 9 18.5 10 V18 C18.5 22 16.5 25 13 25 C10 25 8.5 23 8.5 19.5 V15 C8.5 13.8 10 13.8 10 15" fill="#F7F3E8" stroke="#111E33" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18.5 17 L21.5 14.5 C22.5 13.8 23.8 14.8 23 16 L19.5 21" fill="#F7F3E8" stroke="#111E33" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span class="action-caption">USE</span>
+          </button>
+
+          <!-- Crosshair Button (Top): Aim & Fire Ranged / Decoy -->
+          <button id="btn-action-crosshair" class="action-btn action-crosshair" title="Aim & Fire Ranged / Throw Rock (Right Click / F)" aria-label="Aim and Fire">
+            <svg viewBox="0 0 32 32" width="26" height="26">
+              <circle cx="16" cy="16" r="9" fill="none" stroke="#111E33" stroke-width="1.8"/>
+              <circle cx="16" cy="16" r="2.2" fill="#F85A5A"/>
+              <line x1="16" y1="3" x2="16" y2="10" stroke="#111E33" stroke-width="1.8"/>
+              <line x1="16" y1="22" x2="16" y2="29" stroke="#111E33" stroke-width="1.8"/>
+              <line x1="3" y1="16" x2="10" y2="16" stroke="#111E33" stroke-width="1.8"/>
+              <line x1="22" y1="16" x2="29" y2="16" stroke="#111E33" stroke-width="1.8"/>
+            </svg>
+            <span class="action-caption">FIRE</span>
+          </button>
+
+          <!-- Target Reticle Button (Bottom): Parang Melee Strike -->
+          <button id="btn-action-reticle" class="action-btn action-reticle" title="Parang Melee Strike (Left Click / Space)" aria-label="Parang Strike">
+            <svg viewBox="0 0 32 32" width="28" height="28">
+              <circle cx="16" cy="16" r="10.5" fill="none" stroke="#F85A5A" stroke-width="1.8" stroke-dasharray="4 3"/>
+              <path d="M9 23 L14.5 17.5 L22.5 8 C23.8 10 23 13 19.5 16.5 L15.5 20.5 L11 24 Z" fill="#111E33"/>
+            </svg>
+            <span class="action-caption">SLASH</span>
+          </button>
+
+          <!-- Bag Button: Quick-Slot Consumable + Crouch -->
+          <button id="btn-action-bag" class="action-btn action-bag" title="Quick Consumable (Q)" aria-label="Quick Bag">
+            <svg viewBox="0 0 32 32" width="24" height="24">
+              <path d="M12 10 L10 6 H22 L20 10" fill="none" stroke="#111E33" stroke-width="1.8" stroke-linejoin="round"/>
+              <path d="M9 11 H23 L25 25 H7 Z" fill="#F4ECD8" stroke="#111E33" stroke-width="1.8" stroke-linejoin="round"/>
+              <line x1="16" y1="15" x2="16" y2="21" stroke="#F85A5A" stroke-width="2"/>
+              <line x1="13" y1="18" x2="19" y2="18" stroke="#F85A5A" stroke-width="2"/>
+            </svg>
+            <span class="action-caption" id="bag-quick-count">BAG</span>
+          </button>
+
+          <!-- Crouch Toggle Mini-Button -->
+          <button id="btn-action-crouch" class="action-btn action-crouch" title="Crouch / Fern Conceal (C)" aria-label="Crouch">
+            <span class="action-caption">CROUCH</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROLOGUE: CLASSIFIED BLACK-OPS DOSSIER OVERLAY -->
+    <div id="prologue-overlay" class="modal-overlay">
+      <div class="dossier-paper">
+        <div class="dossier-stamp">TOP SECRET // GGK COMMAND</div>
+        <div class="dossier-header-line">
+          <span>OPERATION: SILENT RAIN (OPERASI HUJAN HENING)</span>
+          <span>FILE #BPZ-2026-01</span>
+        </div>
+        <pre id="prologue-typewriter" class="dossier-body"></pre>
+        <div class="dossier-footer">
+          <div class="controls-hint">
+            WASD Move &bull; C Crouch/Conceal &bull; Shift Sprint &bull; Click Attack/Aim &bull; E Takedown/Use &bull; 1-4 Weapons &bull; B Bivouac Camp
+          </div>
+          <div class="dossier-actions">
+            <button id="btn-prologue-skip" class="ink-btn secondary">SKIP BRIEFING</button>
+            <button id="btn-begin-operation" class="ink-btn primary">BEGIN OPERATION</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- "GO HOME" BIVOUAC CAMP OVERLAY -->
+    <div id="camp-modal" class="modal-overlay hidden">
+      <div class="parchment-panel camp-panel">
+        <div class="panel-header">
+          <div>
+            <h2>BIVOUAC SHELTER // BELUM CANOPY</h2>
+            <p class="panel-subtitle">Safe Field Camp &mdash; Craft, Purify, Cook &amp; Decrypt VBS Telemetry</p>
+          </div>
+          <button id="btn-camp-close" class="ink-btn secondary">RETURN TO FIELD [B]</button>
+        </div>
+        <div id="camp-status-msg" class="camp-status-msg">Rain taps steadily on the tarpaulin. Select a station below.</div>
+        <div class="camp-grid">
+          <!-- Station 1: Rainwater Filtration -->
+          <div class="camp-card" id="station-water">
+            <h3>1. Rainwater Filtration Station</h3>
+            <p>Purify murky rainforest runoff into <strong>Pure Drinking Water</strong> (+50% stamina regen).</p>
+            <div class="camp-inv-line" id="camp-water-counts"></div>
+            <button id="btn-craft-water" class="ink-btn primary">FILTER WATER (1 Dirty Rainwater)</button>
+          </div>
+
+          <!-- Station 2: Ration Cookstove -->
+          <div class="camp-card" id="station-cook">
+            <h3>2. Ration Cookstove</h3>
+            <p>Simmer Wild Bamboo Shoots + Harvested Boar Meat into <strong>Jungle Stew Ration</strong> (+6 HP).</p>
+            <div class="camp-inv-line" id="camp-cook-counts"></div>
+            <button id="btn-craft-stew" class="ink-btn primary">COOK STEW (1 Bamboo + 1 Meat)</button>
+          </div>
+
+          <!-- Station 3: Field Workbench -->
+          <div class="camp-card" id="station-bench">
+            <h3>3. Field Workbench</h3>
+            <p>Fletch silent <strong>Crossbow Bolts</strong> or press <strong>9mm Subsonic Rounds</strong>.</p>
+            <div class="camp-inv-line" id="camp-bench-counts"></div>
+            <div class="camp-btn-stack">
+              <button id="btn-craft-bolts" class="ink-btn primary">FLETCH +3 BOLTS (1 Bamboo + 1 Wire)</button>
+              <button id="btn-craft-ammo" class="ink-btn secondary">PRESS +4 9MM ROUNDS (1 Wire)</button>
+            </div>
+          </div>
+
+          <!-- Station 4: Decryption Terminal -->
+          <div class="camp-card" id="station-decrypt">
+            <h3>4. Decryption Terminal</h3>
+            <p>Crack encrypted <strong>VBS Telemetry Drives</strong> to uncover passcodes &amp; BT-09 lore.</p>
+            <div class="camp-inv-line" id="camp-decrypt-counts"></div>
+            <button id="btn-decrypt-drive" class="ink-btn primary">DECRYPT RECOVERED DRIVE</button>
+            <div id="camp-lore-output" class="camp-lore-box">No decrypted telemetry loaded.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- UTILITY DRAWER MODAL (Dossier / Backpack / Weapons / Settings) -->
+    <div id="utility-modal" class="modal-overlay hidden">
+      <div class="parchment-panel utility-panel">
+        <div class="panel-header">
+          <h2 id="utility-modal-title">FIELD DOSSIER</h2>
+          <button id="btn-utility-close" class="ink-btn secondary">CLOSE</button>
+        </div>
+        <div id="utility-modal-body" class="utility-body"></div>
+      </div>
+    </div>
+
+    <!-- VICTORY / GAME OVER MODAL -->
+    <div id="endgame-modal" class="modal-overlay hidden">
+      <div class="parchment-panel endgame-panel">
+        <div id="endgame-stamp" class="dossier-stamp">OPERATION COMPLETE</div>
+        <h2 id="endgame-title">ACT 1 EXTRACTION COMPLETE</h2>
+        <p id="endgame-desc"></p>
+        <div id="endgame-stats" class="endgame-stats"></div>
+        <div class="dossier-actions">
+          <button id="btn-restart-game" class="ink-btn primary">REPLAY ACT 1</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ordered Classic/UMD Scripts (Zero-bundler, qc_validator compatible) -->
+  <script src="src/audio/sound_engine.js"></script>
+  <script src="src/engine/camera.js"></script>
+  <script src="src/engine/animator.js"></script>
+  <script src="src/input/input_manager.js"></script>
+  <script src="src/entities/projectile.js"></script>
+  <script src="src/entities/player.js"></script>
+  <script src="src/entities/mercenary.js"></script>
+  <script src="src/entities/boar.js"></script>
+  <script src="src/world/obstacles.js"></script>
+  <script src="src/world/level_act1.js"></script>
+  <script src="src/engine/renderer.js"></script>
+  <script src="src/ui/hud.js"></script>
+  <script src="src/ui/camp.js"></script>
+  <script src="src/ui/prologue.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>

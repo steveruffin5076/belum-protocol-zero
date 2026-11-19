@@ -1,0 +1,11 @@
+{
+  "name": "belum-protocol-zero",
+  "version": "1.0.0",
+  "description": "Belum: Protocol Zero (Operasi Hujan Hening) — Act 1 2.5D Oblique Tactical Stealth Survival",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "qc": "node tools/qc_validator.js"
+  },
+  "license": "MIT"
+}
