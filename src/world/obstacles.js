@@ -30,7 +30,8 @@
       this.width = Number.isFinite(cfg.width) ? cfg.width : 100;
       this.height = Number.isFinite(cfg.height) ? cfg.height : 80;
 
-      // Footprint collision box (lower portion of 2.5D prop for realistic oblique overlap)
+      // Footprint collision box: full height for vertical walls/fences/gates so players/AI cannot walk past top half
+      const fullHeightBarrier = ['sector_gate', 'fence', 'barricade', 'bunker_wall', 'culvert_grate', 'blast_gate'].includes(this.type);
       this.solid = cfg.solid !== undefined ? cfg.solid : this.type !== 'fern';
       this.blocksVision = cfg.blocksVision !== undefined
         ? cfg.blocksVision
@@ -39,10 +40,10 @@
         ? cfg.blocksProjectiles
         : !['fern', 'fence'].includes(this.type);
 
-      this.colX = cfg.colX !== undefined ? cfg.colX : this.x + 8;
-      this.colY = cfg.colY !== undefined ? cfg.colY : this.y + this.height * 0.48;
-      this.colW = cfg.colW !== undefined ? cfg.colW : Math.max(16, this.width - 16);
-      this.colH = cfg.colH !== undefined ? cfg.colH : Math.max(16, this.height * 0.48);
+      this.colX = cfg.colX !== undefined ? cfg.colX : (fullHeightBarrier ? this.x : this.x + 8);
+      this.colY = cfg.colY !== undefined ? cfg.colY : (fullHeightBarrier ? this.y : this.y + this.height * 0.48);
+      this.colW = cfg.colW !== undefined ? cfg.colW : (fullHeightBarrier ? this.width : Math.max(16, this.width - 16));
+      this.colH = cfg.colH !== undefined ? cfg.colH : (fullHeightBarrier ? this.height : Math.max(16, this.height * 0.48));
 
       this.label = cfg.label || '';
       this.unlocked = false;
@@ -180,6 +181,8 @@
         this._drawBunkerWall(ctx);
       } else if (this.type === 'fence') {
         this._drawFence(ctx);
+      } else if (this.type === 'barricade') {
+        this._drawBarricade(ctx);
       } else if (this.type === 'hollow_log') {
         this._drawFallbackLog(ctx);
       } else if (this.type === 'fern') {
@@ -188,7 +191,7 @@
         this._drawInkTree(ctx);
       }
 
-      if (this.label && ['sector_gate', 'fishing_hut', 'radio_truck', 'guard_tower', 'basha_site'].includes(this.type)) {
+      if (this.label && ['sector_gate', 'fishing_hut', 'radio_truck', 'guard_tower'].includes(this.type)) {
         this._drawStructureStamp(ctx, this.x + this.width * 0.5, this.y + this.height + 10, this.label);
       }
 
@@ -516,16 +519,74 @@
       }
     }
 
+    // TODO: replace with modern perimeter chain-link fence art prop if dedicated sprite is added
     _drawFence(ctx) {
-      ctx.strokeStyle = '#1C2844';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(this.x, this.y + this.height * 0.4, this.width, this.height * 0.55);
+      const x = this.x;
+      const y = this.y;
+      const w = this.width;
+      const h = this.height;
+      // Subtle parchment backing so barrier reads clearly against terrain
+      ctx.fillStyle = 'rgba(214, 198, 166, 0.42)';
+      ctx.fillRect(x, y, w, h);
+
+      // Outer steel frame rails
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.strokeRect(x, y, w, h);
+
+      // Diagonal chain-link mesh across full height
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(17, 30, 51, 0.45)';
-      for (let x = this.x; x < this.x + this.width; x += 14) {
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.48)';
+      const step = 16;
+      for (let py = y + step; py < y + h; py += step) {
         ctx.beginPath();
-        ctx.moveTo(x, this.y + this.height * 0.4);
-        ctx.lineTo(x + 10, this.y + this.height * 0.95);
+        ctx.moveTo(x + 2, py);
+        ctx.lineTo(x + w - 2, py - 12);
+        ctx.moveTo(x + 2, py - 12);
+        ctx.lineTo(x + w - 2, py);
+        ctx.stroke();
+      }
+
+      // Steel fence posts & concertina wire loops every 64 px
+      ctx.fillStyle = '#1C2844';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 1.4;
+      for (let py = y + 8; py < y + h; py += 64) {
+        ctx.fillRect(x - 2, py - 3, w + 4, 6);
+        ctx.beginPath();
+        ctx.arc(x + w * 0.5, py + 24, Math.min(11, w * 0.45), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // TODO: replace with assets/environment/log_wire_barricade.png
+    _drawBarricade(ctx) {
+      const x = this.x;
+      const y = this.y;
+      const w = this.width;
+      const h = this.height;
+      // Timber barricade body
+      ctx.fillStyle = '#E0D2B4';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+
+      // Stacked logged planks & cross-braced timber stakes
+      ctx.strokeStyle = '#1C2844';
+      ctx.lineWidth = 1.6;
+      for (let py = y + 18; py < y + h; py += 22) {
+        ctx.beginPath();
+        ctx.moveTo(x + 2, py);
+        ctx.lineTo(x + w - 2, py);
+        ctx.stroke();
+      }
+      // Coiled barbed-wire loops down the east face
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.72)';
+      ctx.lineWidth = 1.3;
+      for (let py = y + 14; py < y + h - 8; py += 28) {
+        ctx.beginPath();
+        ctx.ellipse(x + w * 0.5, py, w * 0.42, 9, 0.3, 0, Math.PI * 2);
         ctx.stroke();
       }
     }

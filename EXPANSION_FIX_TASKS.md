@@ -1,5 +1,13 @@
 # Belum: Protocol Zero — Expansion Fix Tasks
 
+> **Status: COMPLETED** — All Fixes 1–6 implemented and verified (`npm run qc` 69/69, `npm run test:ai` 3/3, `npm run test:level` [`act1_flow_check.js` 14/14, `gate_geometry_check.js` 6/6, `route_length_check.js` 25,361 px / 156.5 s pure walking total — S1 34.2 s, S2 43.0 s, S3 40.5 s, S4 38.9 s], `node tools/needs_check.js` 10/10, `check_queued_input.js`, `check_new_game_checkpoint.js`, real-input Fix 3/4/5 browser checks, and Fix 6 negative barrier mutation test):
+> - [x] **Fix 1:** Sealed all three sector boundaries (`x = 1065`, `2135`, `3090`) across `y = 0..1320` with full-height collision bounds, fence/barricade visuals, and `culvert_entry_grate` lock (`src/world/obstacles.js`, `src/world/level_act1.js`, `src/main.js`, `tools/gate_geometry_check.js`)
+> - [x] **Fix 2:** Added `tools/route_length_check.js` (10 px A* grid, 16 px padding, 162 px/s) and redesigned required objectives with guarded zig-zag detours and +1 patrolling guard per sector (`src/world/act1_flow.js`, `src/world/level_act1.js`, `src/entities/player.js`, `src/main.js`, `tools/route_length_check.js`)
+> - [x] **Fix 3:** Scoped river leech checks to `level.riverZone` (`x: 0..135`), verified spawn safety outside leech zones, and allowed wading into `riverZone` with real `KeyA` input (`src/main.js`, `src/entities/player.js`)
+> - [x] **Fix 4:** Restricted item/objective badges & labels to `<= 120 px` (`120–220 px` ink sparkle only) and hid basha sites until discovered within `150 px`, showing only a circular tarp-shelter icon afterwards (`src/engine/renderer.js`, `src/world/obstacles.js`)
+> - [x] **Fix 5:** Removed safe code `4719` from the mission log and gated it in the objective list behind `inventory.hasSafeCode` with live HUD re-render (`src/ui/hud.js`, `src/main.js`)
+> - [x] **Fix 6:** Added `npm run test:level` (`act1_flow_check` + `gate_geometry_check` + `route_length_check`) in `package.json` and confirmed it fails (`exit 1`) when a barrier segment is deleted (`package.json`, `tools/gate_geometry_check.js`, `tools/route_length_check.js`)
+
 Task file for the implementing agent. These fixes come from a review of commit `b26d42a` (`ACT1_EXPANSION_MODERN_TASKS.md` Tasks 10, 9, 4, 7 and 6). Do them in order, before the remaining expansion tasks (1, 2, 3, 5 and 8).
 
 ## Rules

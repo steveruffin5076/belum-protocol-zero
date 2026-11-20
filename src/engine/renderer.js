@@ -994,8 +994,11 @@
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (it.collected) continue;
+        const dist = state.player
+          ? Math.hypot(it.x - state.player.centerX, it.y - state.player.centerY)
+          : Infinity;
 
-        // Bespoke 2.5D Biometric Keycard Terminal Pedestal
+        // Bespoke 2.5D Biometric Keycard Terminal Pedestal (world prop visible, label <= 120 px only)
         if (it.type === 'blast_terminal') {
           const ped = this.sprites && this.sprites.keycard_pedestal;
           ctx.save();
@@ -1005,14 +1008,38 @@
             const pulse = 0.55 + 0.45 * Math.sin(this.time * 5);
             ctx.fillStyle = `rgba(248, 90, 90, ${pulse.toFixed(3)})`;
             ctx.fillRect(it.x - 9, it.y - 22, 18, 3);
-            ctx.fillStyle = PALETTE.inkMid;
-            ctx.font = 'bold 10px "Courier New", monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(it.label || '', it.x, it.y - 58);
+            if (dist <= 120) {
+              ctx.fillStyle = PALETTE.inkMid;
+              ctx.font = 'bold 10px "Courier New", monospace';
+              ctx.textAlign = 'center';
+              ctx.fillText(it.label || '', it.x, it.y - 58);
+            }
             ctx.restore();
             continue;
           }
           ctx.restore();
+        }
+
+        // Fix 4: Beyond 220 px draw nothing; 120..220 px draw only a small ink sparkle; <= 120 px draw badge & label
+        if (dist > 220) continue;
+
+        if (dist > 120) {
+          const glint = 0.45 + 0.55 * Math.abs(Math.sin(this.time * 3.2 + i * 1.7));
+          const r = 4.5 + glint * 2.5;
+          ctx.save();
+          ctx.translate(it.x, it.y - 4);
+          ctx.strokeStyle = `rgba(17, 30, 51, ${(0.35 + glint * 0.45).toFixed(3)})`;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+          ctx.moveTo(0, -r); ctx.lineTo(0, r);
+          ctx.stroke();
+          ctx.fillStyle = it.highlight ? `rgba(248, 90, 90, ${(0.45 + glint * 0.4).toFixed(3)})` : `rgba(17, 30, 51, ${(0.45 + glint * 0.4).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          continue;
         }
 
         const bob = Math.sin(this.time * 3.5 + i) * 3;
@@ -1060,6 +1087,43 @@
           ctx.font = 'bold 10px "Courier New", monospace';
           ctx.fillText(it.label || '', 0, -20);
         }
+        ctx.restore();
+      }
+
+      // Fix 4: Hidden Basha Sites show NO label and NO marker until discovered (within 150 px).
+      // After discovery, show a small tarp-shelter icon with NO text from any distance.
+      // TODO: replace icon with assets/ui/status_icons_sheet.png icon 8 (tarp shelter)
+      const bashaSites = (state.level && state.level.bashaSites) || [];
+      for (let i = 0; i < bashaSites.length; i++) {
+        const site = bashaSites[i];
+        if (!site.discovered) continue;
+        ctx.save();
+        ctx.translate(site.x, site.y - 44);
+        ctx.fillStyle = PALETTE.paperBase;
+        ctx.strokeStyle = PALETTE.inkDeep;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Sloped tarp-shelter silhouette (no text)
+        ctx.fillStyle = '#E6DAC0';
+        ctx.beginPath();
+        ctx.moveTo(-9, 5);
+        ctx.lineTo(-1, -6);
+        ctx.lineTo(9, -2);
+        ctx.lineTo(7, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-1, -6);
+        ctx.lineTo(0, 6);
+        ctx.stroke();
+        ctx.fillStyle = PALETTE.crimson;
+        ctx.beginPath();
+        ctx.arc(4, 3, 1.6, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
       }
     }

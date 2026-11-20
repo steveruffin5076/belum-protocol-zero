@@ -82,7 +82,10 @@
       // Inventory for Field Cache & Mission Objectives
       this.inventory = {
         hasParangPickup: false,
+        hasLockerKey: false,
         hasBoltCutters: false,
+        hasShedKey: false,
+        hasPumpFuse: false,
         hasSafeCode: false,
         hasKeycard: false,
         encryptedDrives: 0,
@@ -446,8 +449,8 @@
         this.y = nextY;
       }
 
-      // Clamp to world bounds (avoid walking into deep river on left)
-      const minX = level && level.riverZone ? level.riverZone.x + level.riverZone.width + 8 : 16;
+      // Clamp to world bounds (allow wading into shallow riverZone x < 135 for Fix 3 leeches, block walking off-map)
+      const minX = level && level.riverZone ? Math.max(16, level.riverZone.x + 56) : 16;
       const maxX = level ? level.worldW - this.width - 16 : 4100;
       const maxY = level ? level.worldH - this.height - 16 : 1400;
       this.x = Math.max(minX, Math.min(maxX, this.x));

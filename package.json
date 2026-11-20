@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "qc": "node tools/qc_validator.js",
-    "test:ai": "node tools/ai_regression_checks.js"
+    "test:ai": "node tools/ai_regression_checks.js",
+    "test:level": "node tools/act1_flow_check.js && node tools/gate_geometry_check.js && node tools/route_length_check.js"
   },
   "license": "MIT"
 }

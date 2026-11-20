@@ -23,7 +23,10 @@
   const VALID_WEAPONS = ['parang', 'crossbow', 'pistol', 'decoy'];
   const INVENTORY_SCHEMA = {
     hasParangPickup: 'boolean',
+    hasLockerKey: 'boolean',
     hasBoltCutters: 'boolean',
+    hasShedKey: 'boolean',
+    hasPumpFuse: 'boolean',
     hasSafeCode: 'boolean',
     hasKeycard: 'boolean',
     encryptedDrives: 'number',
@@ -660,7 +663,7 @@
             this.level.pumpPowered = true;
             this.level.culvertDrained = true;
             openGateById('ravine_east_gate');
-            openGateById('culvert_grate');
+            openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           }
           if (cp.flags.labSafeOpened) {
             this.level.labSafeOpened = true;
@@ -673,7 +676,7 @@
           }
           if (cp.flags.culvertUnlocked) {
             this.level.culvertUnlocked = true;
-            openGateById('culvert_grate');
+            openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           }
           if (cp.flags.blastGateOpen) {
             this.level.blastGateOpen = true;
@@ -1041,7 +1044,7 @@
         { id: 'cut_fence', text: 'Find Bolt Cutters (Fishing Hut) & cut Outpost Fence', done: !!l.fenceCut },
         { id: 'drive', text: 'Recover Drive 01 in VBS Field Lab (unlock Ravine Gate)', done: hasDrive1 && !!l.outpostGateOpen },
         { id: 'pump', text: 'Restore Ravine Pump Station power (drain Culvert)', done: !!l.pumpPowered },
-        { id: 'keycard', text: 'Get Tier-1 Keycard (Lab Safe 4719 or Cmdr Ward)', done: !!p.inventory.hasKeycard },
+        { id: 'keycard', text: p.inventory.hasSafeCode ? 'Get Tier-1 Keycard (Lab Safe code 4719 or Cmdr Ward)' : 'Get Tier-1 Keycard (Lab Safe or Cmdr Ward)', done: !!p.inventory.hasKeycard },
         { id: 'gate', text: 'Swipe Keycard & survive 15s Blast Gate hold', done: !!l.blastGateOpen },
         { id: 'extract', text: 'Enter Facility Sub-Zero Extraction Zone', done: this.mode === 'VICTORY' },
         { id: 'secondary', text: `Secondary Objectives (${secCount}/4 complete)`, done: secCount === 4 }
@@ -1937,14 +1940,45 @@
           p.unlockedWeapons.pistol = true;
           p.ammo.pistol += 8;
           if (this.hud) this.hud.showToast('ACQUIRED SUPPRESSED 9MM PISTOL (+8 ROUNDS)', 2.8);
+        } else if (it.type === 'locker_key') {
+          it.collected = true;
+          p.inventory.hasLockerKey = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SALVAGED BOAT LOCKER KEY — UNLOCK FISHING HUT BOAT LOCKER', 3.0);
         } else if (it.type === 'bolt_cutters') {
+          if (!p.inventory.hasLockerKey) {
+            if (this.hud) this.hud.showToast('BOAT LOCKER PADLOCKED — FIND LOCKER KEY AT NORTH SENTRY CRATE', 3.0);
+            return;
+          }
           it.collected = true;
           p.inventory.hasBoltCutters = true;
           if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
-          if (this.hud) this.hud.showToast('SALVAGED HEAVY BOLT CUTTERS — CUT THE OUTPOST FENCE', 3.0);
+          if (this.hud) this.hud.showToast('SALVAGED HEAVY BOLT CUTTERS — CUT NW & SE FENCE RELAYS', 3.2);
+        } else if (it.type === 's1_breaker_north') {
+          if (!p.inventory.hasBoltCutters) {
+            if (this.hud) this.hud.showToast('NEED BOLT CUTTERS TO SEVER NW FENCE VOLTAGE FEEDER', 2.8);
+            return;
+          }
+          it.collected = true;
+          this.level.s1BreakerNorthCut = true;
+          this._emitAcousticRing(it.x, it.y, 120, false);
+          if (this.hud) this.hud.showToast('NW FENCE VOLTAGE FEEDER SEVERED (1/2)', 2.8);
+        } else if (it.type === 's1_breaker_south') {
+          if (!p.inventory.hasBoltCutters) {
+            if (this.hud) this.hud.showToast('NEED BOLT CUTTERS TO SEVER SE OUTPOST GROUNDING RELAY', 2.8);
+            return;
+          }
+          it.collected = true;
+          this.level.s1BreakerSouthCut = true;
+          this._emitAcousticRing(it.x, it.y, 120, false);
+          if (this.hud) this.hud.showToast('SE OUTPOST GROUNDING RELAY SEVERED — FENCE DE-ENERGIZED!', 3.0);
         } else if (it.type === 'cut_fence') {
           if (!p.inventory.hasBoltCutters) {
             if (this.hud) this.hud.showToast('LOCKED FENCE — FIND BOLT CUTTERS IN SOUTH FISHING HUT BOAT LOCKER', 3.0);
+            return;
+          }
+          if (!this.level.s1BreakerNorthCut || !this.level.s1BreakerSouthCut) {
+            if (this.hud) this.hud.showToast('FENCE ELECTRIFIED — CUT BOTH NW & SE FENCE RELAYS FIRST', 3.2);
             return;
           }
           it.collected = true;
@@ -1952,6 +1986,11 @@
           openGateById('outpost_fence_gate');
           this._emitAcousticRing(it.x, it.y, 140, false);
           if (this.hud) this.hud.showToast('OUTPOST FENCE CUT OPEN — SECTOR 2 ACCESSIBLE!', 3.0);
+        } else if (it.type === 'shed_key') {
+          it.collected = true;
+          p.inventory.hasShedKey = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('ACQUIRED DIESEL SHED SHUTOFF KEY — KILL POWER AT SW GENERATOR', 3.2);
         } else if (it.type === 'lab_safe') {
           if (!p.inventory.hasSafeCode) {
             if (this.hud) this.hud.showToast('LAB SAFE LOCKED — DECRYPT DRIVE 01 AT A FIELD CACHE FOR 4-DIGIT CODE', 3.2);
@@ -1961,7 +2000,7 @@
           this.level.labSafeOpened = true;
           p.inventory.hasKeycard = true;
           if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
-          if (this.hud) this.hud.showToast('SAFE CODE 4719 ACCEPTED — ACQUIRED TIER-1 SECURITY KEYCARD!', 3.4);
+          if (this.hud) this.hud.showToast('SAFE CODE ACCEPTED — ACQUIRED TIER-1 SECURITY KEYCARD!', 3.4);
         } else if (it.type === 'outpost_gate') {
           const hasDrive1 = p.inventory.encryptedDrives > 0 || p.inventory.decryptedLore.length > 0;
           if (!hasDrive1) {
@@ -1972,15 +2011,76 @@
           this.level.outpostGateOpen = true;
           openGateById('outpost_east_gate');
           if (this.hud) this.hud.showToast('RAVINE CHECKPOINT UNLOCKED — ENTERING SECTOR 3!', 3.0);
+        } else if (it.type === 'pump_fuse') {
+          it.collected = true;
+          p.inventory.hasPumpFuse = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SALVAGED HIGH-AMP PUMP FUSE — INSTALL AT NW RAVINE BREAKER', 3.2);
+        } else if (it.type === 'intake_valve') {
+          it.collected = true;
+          this.level.intakeValveOpen = true;
+          this._emitAcousticRing(it.x, it.y, 140, false);
+          if (this.hud) this.hud.showToast('RAVINE INTAKE SLUICE CLEARED — LINE READY FOR PUMP POWER', 3.0);
+        } else if (it.type === 'ravine_breaker') {
+          if (!p.inventory.hasPumpFuse) {
+            if (this.hud) this.hud.showToast('BREAKER BLOWN — SALVAGE PUMP FUSE FROM NE RAVINE WATCHTOWER', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.ravineBreakerPowered = true;
+          this._emitAcousticRing(it.x, it.y, 160, false);
+          if (this.hud) this.hud.showToast('PUMP FUSE INSTALLED — POWER UP SE RAVINE PUMP STATION', 3.2);
         } else if (it.type === 'pump_station') {
+          if (!this.level.intakeValveOpen || !this.level.ravineBreakerPowered) {
+            if (this.hud) this.hud.showToast('PUMP OFFLINE — CLEAR SW INTAKE SLUICE & INSTALL FUSE AT NW BREAKER', 3.4);
+            return;
+          }
           it.collected = true;
           this.level.pumpPowered = true;
           this.level.culvertDrained = true;
           this.level.culvertUnlocked = true;
-          openGateById('ravine_east_gate');
-          openGateById('culvert_grate');
+          openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           this._emitAcousticRing(it.x, it.y, 260, false);
-          if (this.hud) this.hud.showToast('PUMP STATION POWERED — CULVERT DRAINED & PERIMETER GATE OPEN!', 3.4);
+          if (this.hud) this.hud.showToast('PUMP STATION POWERED — CULVERT DRAINED! HIT NE PERIMETER GATE RELEASE', 3.4);
+        } else if (it.type === 'ravine_gate_ctrl') {
+          if (!this.level.pumpPowered) {
+            if (this.hud) this.hud.showToast('PERIMETER GATE UNPOWERED — RESTORE SE RAVINE PUMP STATION FIRST', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.ravineGateReleased = true;
+          openGateById('ravine_east_gate');
+          this._emitAcousticRing(it.x, it.y, 180, false);
+          if (this.hud) this.hud.showToast('PERIMETER GATE RELEASED — SECTOR 4 ACCESSIBLE!', 3.2);
+        } else if (it.type === 's4_relay_tower') {
+          it.collected = true;
+          this.level.s4RelayOff = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('NE GUARD TOWER BLAST INTERLOCK DISABLED', 2.8);
+        } else if (it.type === 's4_hydraulic_a') {
+          it.collected = true;
+          this.level.s4HydraulicA = true;
+          this._emitAcousticRing(it.x, it.y, 150, false);
+          if (this.hud) this.hud.showToast('SW BUNKER HYDRAULIC LOCK A RELEASED', 2.8);
+        } else if (it.type === 's4_override_truck') {
+          it.collected = true;
+          this.level.s4OverrideToken = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('CAPTURED BLAST GATE ROLLING OVERRIDE TOKEN FROM COMMAND RELAY', 3.0);
+        } else if (it.type === 's4_hydraulic_b') {
+          it.collected = true;
+          this.level.s4HydraulicB = true;
+          this._emitAcousticRing(it.x, it.y, 150, false);
+          if (this.hud) this.hud.showToast('SE BUNKER HYDRAULIC LOCK B RELEASED — PURGE WEST MANIFOLD', 3.0);
+        } else if (it.type === 's4_purge_valve') {
+          if (!this.level.s4HydraulicA || !this.level.s4HydraulicB) {
+            if (this.hud) this.hud.showToast('MANIFOLD LOCKED — RELEASE HYDRAULIC LOCKS A & B FIRST', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.s4PurgeDone = true;
+          this._emitAcousticRing(it.x, it.y, 180, false);
+          if (this.hud) this.hud.showToast('BUNKER PRESSURE PURGED — BLAST GATE TERMINAL ARMED FOR KEYCARD!', 3.2);
         } else if (it.type === 'sec_body_cam') {
           it.collected = true;
           if (this.level.secondaryObjectives) this.level.secondaryObjectives.bodyCam = true;
@@ -2081,6 +2181,10 @@
           p.inventory.battery = (p.inventory.battery || 0) + 1;
           if (this.hud) this.hud.showToast('SALVAGED RADIO PARTS (x2) & BATTERY — IMPROVISE RADIO JAMMER AT WORKBENCH', 3.0);
         } else if (it.type === 'encrypted_drive') {
+          if (it.id === 'pickup_drive_01' && !this.level.generatorSabotaged) {
+            if (this.hud) this.hud.showToast('FIELD LAB BACK ROOM MAGLOCKED — SHUT DOWN SW DIESEL GENERATOR FIRST', 3.4);
+            return;
+          }
           it.collected = true;
           p.inventory.encryptedDrives++;
           if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
@@ -2106,13 +2210,17 @@
           p.ammo.crossbow += 1;
           if (this.hud) this.hud.showToast('RECOVERED CARBON BOLT (+1)', 1.5);
         } else if (it.type === 'generator') {
+          if (!p.inventory.hasShedKey) {
+            if (this.hud) this.hud.showToast('DIESEL SHED LOCKED — FIND SHUTOFF KEY AT NE BARRACKS LOCKBOX', 3.2);
+            return;
+          }
           it.collected = true;
           this.level.generatorSabotaged = true;
           for (let f = 0; f < this.level.floodlights.length; f++) {
             if (this.level.floodlights[f].sector === 2) this.level.floodlights[f].active = false;
           }
           this._emitAcousticRing(it.x, it.y, 290, false);
-          if (this.hud) this.hud.showToast('GENERATOR SABOTAGED — OUTPOST FLOODLIGHTS DARK!', 3.2);
+          if (this.hud) this.hud.showToast('GENERATOR SABOTAGED — FLOODLIGHTS DARK & FIELD LAB BACK ROOM UNLOCKED!', 3.4);
         } else if (it.type === 'culvert_unlock') {
           if (!this.level.culvertDrained && !p.inventory.hasKeycard) {
             if (this.hud) this.hud.showToast('CULVERT FLOODED — POWER SECTOR 3 PUMP STATION FIRST', 2.8);
@@ -2120,11 +2228,15 @@
           }
           it.collected = true;
           this.level.culvertUnlocked = true;
-          openGateById('culvert_grate');
+          openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           if (this.hud) this.hud.showToast('DRAINAGE CULVERT OPEN — STEALTH BYPASS CLEAR!', 3.0);
         } else if (it.type === 'blast_terminal') {
           if (!p.inventory.hasKeycard) {
-            if (this.hud) this.hud.showToast('ACCESS DENIED — GET TIER-1 KEYCARD (LAB SAFE 4719 OR CMDR WARD)', 3.2);
+            if (this.hud) this.hud.showToast('ACCESS DENIED — GET TIER-1 KEYCARD (LAB SAFE OR CMDR WARD)', 3.2);
+            return;
+          }
+          if (!this.level.s4RelayOff || !this.level.s4HydraulicA || !this.level.s4OverrideToken || !this.level.s4HydraulicB || !this.level.s4PurgeDone) {
+            if (this.hud) this.hud.showToast('BLAST GATE INTERLOCKED — CLEAR GUARD TOWER RELAY, OVERRIDE, HYDRAULIC LOCKS & PRESSURE PURGE', 3.6);
             return;
           }
           it.collected = true;
@@ -2376,15 +2488,20 @@
         }
       }
 
-      // Task 6b: Leeches when wading in deep water or flooded culvert for > 4 s (-10% max stamina each, up to 3)
-      const inRiverEdge = this.currentSectorId === 1 && p.centerX < 210;
+      // Fix 3: Leeches attach only inside actual level.riverZone (x 0..135) or flooded culvert (> 4 s)
+      const rz = l.riverZone;
+      const inRiver = !!(
+        rz &&
+        p.centerX >= rz.x && p.centerX <= rz.x + rz.width &&
+        p.centerY >= rz.y && p.centerY <= rz.y + rz.height
+      );
       const cz = l.culvertZone;
       const inFloodedCulvert = !!(
         cz && !l.culvertDrained &&
         p.centerX >= cz.x && p.centerX <= cz.x + cz.width &&
         p.centerY >= cz.y && p.centerY <= cz.y + cz.height
       );
-      if (inRiverEdge || inFloodedCulvert) {
+      if (inRiver || inFloodedCulvert) {
         p.wadeTimer = (p.wadeTimer || 0) + dt;
         if (p.wadeTimer >= 4.0 && (p.leeches || 0) < 3) {
           p.wadeTimer = 0;

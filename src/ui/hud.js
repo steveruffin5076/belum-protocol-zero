@@ -177,7 +177,7 @@
           : '<div class="utility-item">No VBS drives decrypted yet. Recover Encrypted Drive 01 in the Logging Outpost and decrypt it at a Field Cache (basha site).</div>';
         this.utilityBody.innerHTML = `
           <p><strong>OPERATOR:</strong> Kancil (Codename: SPECTRE) &bull; <strong>REGION:</strong> Belum-Temengor Rainforest, Perak</p>
-          <p><strong>PRIMARY DIRECTIVE:</strong> Infiltrate Sungai Belum, secure Tier-1 Clearance (Lab Safe 4719 or Commander Ward), and breach the Temenggor Perimeter Blast Gate.</p>
+          <p><strong>PRIMARY DIRECTIVE:</strong> Infiltrate Sungai Belum, secure Tier-1 Clearance (Lab Safe or Commander Ward), and breach the Temenggor Perimeter Blast Gate.</p>
           <h3 style="margin:12px 0 6px;font-size:13px;letter-spacing:1px;">SERVICE RECORD // OPERATOR PROFICIENCY</h3>
           <div class="utility-grid" id="service-record-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">${serviceHtml}</div>
           <h3 style="margin:14px 0 6px;font-size:13px;letter-spacing:1px;">RECOVERED TELEMETRY &amp; INTEL</h3>
@@ -476,7 +476,7 @@
 
       // Objectives scroll
       if (this.questListEl && Array.isArray(state.objectives)) {
-        const key = state.objectives.map((o) => `${o.id}:${o.done}`).join('|');
+        const key = state.objectives.map((o) => `${o.id}:${o.done}:${o.text}`).join('|');
         if (key !== this._lastObjectiveKey) {
           this._lastObjectiveKey = key;
           let foundActive = false;

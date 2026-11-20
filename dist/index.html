@@ -3255,7 +3255,10 @@ window.__resolveBelumAsset = function(p) {
       // Inventory for Field Cache & Mission Objectives
       this.inventory = {
         hasParangPickup: false,
+        hasLockerKey: false,
         hasBoltCutters: false,
+        hasShedKey: false,
+        hasPumpFuse: false,
         hasSafeCode: false,
         hasKeycard: false,
         encryptedDrives: 0,
@@ -3619,8 +3622,8 @@ window.__resolveBelumAsset = function(p) {
         this.y = nextY;
       }
 
-      // Clamp to world bounds (avoid walking into deep river on left)
-      const minX = level && level.riverZone ? level.riverZone.x + level.riverZone.width + 8 : 16;
+      // Clamp to world bounds (allow wading into shallow riverZone x < 135 for Fix 3 leeches, block walking off-map)
+      const minX = level && level.riverZone ? Math.max(16, level.riverZone.x + 56) : 16;
       const maxX = level ? level.worldW - this.width - 16 : 4100;
       const maxY = level ? level.worldH - this.height - 16 : 1400;
       this.x = Math.max(minX, Math.min(maxX, this.x));
@@ -5249,7 +5252,8 @@ window.__resolveBelumAsset = function(p) {
       this.width = Number.isFinite(cfg.width) ? cfg.width : 100;
       this.height = Number.isFinite(cfg.height) ? cfg.height : 80;
 
-      // Footprint collision box (lower portion of 2.5D prop for realistic oblique overlap)
+      // Footprint collision box: full height for vertical walls/fences/gates so players/AI cannot walk past top half
+      const fullHeightBarrier = ['sector_gate', 'fence', 'barricade', 'bunker_wall', 'culvert_grate', 'blast_gate'].includes(this.type);
       this.solid = cfg.solid !== undefined ? cfg.solid : this.type !== 'fern';
       this.blocksVision = cfg.blocksVision !== undefined
         ? cfg.blocksVision
@@ -5258,10 +5262,10 @@ window.__resolveBelumAsset = function(p) {
         ? cfg.blocksProjectiles
         : !['fern', 'fence'].includes(this.type);
 
-      this.colX = cfg.colX !== undefined ? cfg.colX : this.x + 8;
-      this.colY = cfg.colY !== undefined ? cfg.colY : this.y + this.height * 0.48;
-      this.colW = cfg.colW !== undefined ? cfg.colW : Math.max(16, this.width - 16);
-      this.colH = cfg.colH !== undefined ? cfg.colH : Math.max(16, this.height * 0.48);
+      this.colX = cfg.colX !== undefined ? cfg.colX : (fullHeightBarrier ? this.x : this.x + 8);
+      this.colY = cfg.colY !== undefined ? cfg.colY : (fullHeightBarrier ? this.y : this.y + this.height * 0.48);
+      this.colW = cfg.colW !== undefined ? cfg.colW : (fullHeightBarrier ? this.width : Math.max(16, this.width - 16));
+      this.colH = cfg.colH !== undefined ? cfg.colH : (fullHeightBarrier ? this.height : Math.max(16, this.height * 0.48));
 
       this.label = cfg.label || '';
       this.unlocked = false;
@@ -5399,6 +5403,8 @@ window.__resolveBelumAsset = function(p) {
         this._drawBunkerWall(ctx);
       } else if (this.type === 'fence') {
         this._drawFence(ctx);
+      } else if (this.type === 'barricade') {
+        this._drawBarricade(ctx);
       } else if (this.type === 'hollow_log') {
         this._drawFallbackLog(ctx);
       } else if (this.type === 'fern') {
@@ -5407,7 +5413,7 @@ window.__resolveBelumAsset = function(p) {
         this._drawInkTree(ctx);
       }
 
-      if (this.label && ['sector_gate', 'fishing_hut', 'radio_truck', 'guard_tower', 'basha_site'].includes(this.type)) {
+      if (this.label && ['sector_gate', 'fishing_hut', 'radio_truck', 'guard_tower'].includes(this.type)) {
         this._drawStructureStamp(ctx, this.x + this.width * 0.5, this.y + this.height + 10, this.label);
       }
 
@@ -5735,16 +5741,74 @@ window.__resolveBelumAsset = function(p) {
       }
     }
 
+    // TODO: replace with modern perimeter chain-link fence art prop if dedicated sprite is added
     _drawFence(ctx) {
-      ctx.strokeStyle = '#1C2844';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(this.x, this.y + this.height * 0.4, this.width, this.height * 0.55);
+      const x = this.x;
+      const y = this.y;
+      const w = this.width;
+      const h = this.height;
+      // Subtle parchment backing so barrier reads clearly against terrain
+      ctx.fillStyle = 'rgba(214, 198, 166, 0.42)';
+      ctx.fillRect(x, y, w, h);
+
+      // Outer steel frame rails
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.strokeRect(x, y, w, h);
+
+      // Diagonal chain-link mesh across full height
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(17, 30, 51, 0.45)';
-      for (let x = this.x; x < this.x + this.width; x += 14) {
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.48)';
+      const step = 16;
+      for (let py = y + step; py < y + h; py += step) {
         ctx.beginPath();
-        ctx.moveTo(x, this.y + this.height * 0.4);
-        ctx.lineTo(x + 10, this.y + this.height * 0.95);
+        ctx.moveTo(x + 2, py);
+        ctx.lineTo(x + w - 2, py - 12);
+        ctx.moveTo(x + 2, py - 12);
+        ctx.lineTo(x + w - 2, py);
+        ctx.stroke();
+      }
+
+      // Steel fence posts & concertina wire loops every 64 px
+      ctx.fillStyle = '#1C2844';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 1.4;
+      for (let py = y + 8; py < y + h; py += 64) {
+        ctx.fillRect(x - 2, py - 3, w + 4, 6);
+        ctx.beginPath();
+        ctx.arc(x + w * 0.5, py + 24, Math.min(11, w * 0.45), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // TODO: replace with assets/environment/log_wire_barricade.png
+    _drawBarricade(ctx) {
+      const x = this.x;
+      const y = this.y;
+      const w = this.width;
+      const h = this.height;
+      // Timber barricade body
+      ctx.fillStyle = '#E0D2B4';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
+
+      // Stacked logged planks & cross-braced timber stakes
+      ctx.strokeStyle = '#1C2844';
+      ctx.lineWidth = 1.6;
+      for (let py = y + 18; py < y + h; py += 22) {
+        ctx.beginPath();
+        ctx.moveTo(x + 2, py);
+        ctx.lineTo(x + w - 2, py);
+        ctx.stroke();
+      }
+      // Coiled barbed-wire loops down the east face
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.72)';
+      ctx.lineWidth = 1.3;
+      for (let py = y + 14; py < y + h - 8; py += 28) {
+        ctx.beginPath();
+        ctx.ellipse(x + w * 0.5, py, w * 0.42, 9, 0.3, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -5803,12 +5867,12 @@ window.__resolveBelumAsset = function(p) {
 
 
 /* === src/world/act1_flow.js === */
-// src/world/act1_flow.js - Act 1 Room Graph, Progression Gates & Narrative Beat List (Task 4)
+// src/world/act1_flow.js - Act 1 Room Graph, Progression Gates, Required Route & Narrative Beats (Task 4 + Fix 2)
 (function (global) {
   'use strict';
 
   const ACT1_FLOW = {
-    version: 1,
+    version: 2,
     startNode: 's1_riverbank',
     goalNode: 's4_extraction',
     nodes: [
@@ -5828,36 +5892,88 @@ window.__resolveBelumAsset = function(p) {
     edges: [
       { from: 's1_riverbank', to: 's1_fishing_hut', requires: [] },
       { from: 's1_fishing_hut', to: 's1_riverbank', requires: [] },
-      { from: 's1_riverbank', to: 's2_outpost_yard', requires: ['bolt_cutters'], gateId: 'outpost_fence_gate' },
+      { from: 's1_riverbank', to: 's2_outpost_yard', requires: ['bolt_cutters', 's1_breaker_north', 's1_breaker_south'], gateId: 'outpost_fence_gate' },
       { from: 's2_outpost_yard', to: 's2_field_lab', requires: [] },
       { from: 's2_outpost_yard', to: 's2_diesel_backroom', requires: [] },
       { from: 's2_outpost_yard', to: 's3_infected_ravine', requires: ['drive_01'], gateId: 'outpost_east_gate' },
       { from: 's3_infected_ravine', to: 's3_spore_sinkhole', requires: [] },
       { from: 's3_infected_ravine', to: 's3_pump_station', requires: [] },
-      { from: 's3_infected_ravine', to: 's4_bunker_yard', requires: ['pump_powered'], gateId: 'ravine_east_gate' },
+      { from: 's3_infected_ravine', to: 's4_bunker_yard', requires: ['pump_powered', 's3_gate_ctrl'], gateId: 'ravine_east_gate' },
       { from: 's3_pump_station', to: 's4_culvert_bypass', requires: ['pump_powered'], gateId: 'culvert_grate' },
       { from: 's4_culvert_bypass', to: 's4_bunker_yard', requires: [] },
       { from: 's4_bunker_yard', to: 's4_guard_tower', requires: [] },
-      { from: 's4_bunker_yard', to: 's4_extraction', requires: ['tier1_keycard'], gateId: 'blast_gate' }
+      { from: 's4_bunker_yard', to: 's4_extraction', requires: ['tier1_keycard', 's4_relay_off', 's4_hydraulic_a', 's4_override_token', 's4_hydraulic_b', 's4_purge_valve'], gateId: 'blast_gate' }
     ],
     items: [
-      { id: 'bolt_cutters', node: 's1_fishing_hut', interactableId: 'pickup_bolt_cutters', required: true },
+      // Sector 1 required detour chain
+      { id: 'locker_key', node: 's1_riverbank', interactableId: 'pickup_locker_key', required: true },
+      { id: 'bolt_cutters', node: 's1_fishing_hut', interactableId: 'pickup_bolt_cutters', requires: ['locker_key'], required: true },
+      { id: 's1_breaker_north', node: 's1_riverbank', interactableId: 'obj_s1_breaker_north', requires: ['bolt_cutters'], required: true },
+      { id: 's1_breaker_south', node: 's1_riverbank', interactableId: 'obj_s1_breaker_south', requires: ['bolt_cutters'], required: true },
       { id: 's1_body_cam', node: 's1_riverbank', interactableId: 'sec_body_cam', required: false },
-      { id: 'drive_01', node: 's2_field_lab', interactableId: 'pickup_drive_01', required: true },
+
+      // Sector 2 required detour chain (generator shutoff -> Field Lab Drive 01 -> Basha decrypt -> Lab Safe)
+      { id: 'shed_key', node: 's2_outpost_yard', interactableId: 'pickup_shed_key', required: true },
+      { id: 'generator_off', node: 's2_diesel_backroom', interactableId: 'obj_generator', requires: ['shed_key'], required: true },
+      { id: 'drive_01', node: 's2_field_lab', interactableId: 'pickup_drive_01', requires: ['generator_off'], required: true },
       { id: 'safe_code', node: 's2_field_lab', derivedFrom: ['drive_01'], required: true },
       { id: 'tier1_keycard_safe', grants: 'tier1_keycard', node: 's2_field_lab', interactableId: 'obj_lab_safe', requires: ['safe_code'], required: true },
       { id: 'tier1_keycard_ward', grants: 'tier1_keycard', node: 's4_bunker_yard', source: 'commander_ward_body', requires: [], required: false },
       { id: 's2_sample_photos', node: 's2_field_lab', interactableId: 'sec_photo_samples', required: false },
-      { id: 'pump_powered', node: 's3_pump_station', interactableId: 'obj_pump_station', required: true },
+
+      // Sector 3 required detour chain (watchtower pump fuse + intake sluice + ravine breaker -> pump station -> gate control)
+      { id: 'pump_fuse', node: 's3_infected_ravine', interactableId: 'pickup_pump_fuse', required: true },
+      { id: 'intake_valve', node: 's3_infected_ravine', interactableId: 'obj_intake_valve', required: true },
+      { id: 'ravine_breaker', node: 's3_infected_ravine', interactableId: 'obj_ravine_breaker', requires: ['pump_fuse'], required: true },
+      { id: 'pump_powered', node: 's3_pump_station', interactableId: 'obj_pump_station', requires: ['pump_fuse', 'intake_valve', 'ravine_breaker'], required: true },
+      { id: 's3_gate_ctrl', node: 's3_infected_ravine', interactableId: 'obj_ravine_gate_ctrl', requires: ['pump_powered'], required: true },
       { id: 's3_scientist_intel', node: 's3_infected_ravine', interactableId: 'sec_free_scientist', required: false },
+
+      // Sector 4 required detour chain (interlock relay + hydraulic locks A & B + truck override + pressure purge -> Blast Gate terminal)
+      { id: 's4_relay_off', node: 's4_guard_tower', interactableId: 'obj_s4_relay_tower', required: true },
+      { id: 's4_hydraulic_a', node: 's4_bunker_yard', interactableId: 'obj_s4_hydraulic_a', required: true },
+      { id: 's4_override_token', node: 's4_bunker_yard', interactableId: 'obj_s4_override_truck', required: true },
+      { id: 's4_hydraulic_b', node: 's4_bunker_yard', interactableId: 'obj_s4_hydraulic_b', required: true },
+      { id: 's4_purge_valve', node: 's4_bunker_yard', interactableId: 'obj_s4_purge_valve', requires: ['s4_hydraulic_a', 's4_hydraulic_b'], required: true },
       { id: 's4_gps_planted', node: 's4_bunker_yard', interactableId: 'sec_gps_truck', required: false },
       { id: 's4_jammer_parts', node: 's4_guard_tower', interactableId: 'cache_s4_tower', required: false }
     ],
+    // Ordered required route walked by tools/route_length_check.js (A* on 10 px grid, gates open only after requirement met)
+    requiredRoute: [
+      // Sector 1
+      { id: 's1_locker_key', sector: 1, label: 'North Sentry Crate (Boat Locker Key)', interactableId: 'pickup_locker_key' },
+      { id: 's1_bolt_cutters', sector: 1, label: 'Flooded Fishing Hut Boat Locker (Bolt Cutters)', interactableId: 'pickup_bolt_cutters' },
+      { id: 's1_breaker_n', sector: 1, label: 'NW Fence Voltage Feeder (Cut)', interactableId: 'obj_s1_breaker_north' },
+      { id: 's1_breaker_s', sector: 1, label: 'SE Outpost Grounding Relay (Cut)', interactableId: 'obj_s1_breaker_south' },
+      { id: 's1_cut_fence', sector: 1, label: 'Outpost Fence Gate (Cut & Open)', interactableId: 'obj_cut_fence', opensGates: ['outpost_fence_gate'] },
+      // Sector 2
+      { id: 's2_shed_key', sector: 2, label: 'NE Barracks Lockbox (Diesel Shed Key)', interactableId: 'pickup_shed_key' },
+      { id: 's2_generator', sector: 2, label: 'SW Diesel Generator (Shut Down Power)', interactableId: 'obj_generator' },
+      { id: 's2_drive_01', sector: 2, label: 'NW Field Lab Back Room (Encrypted Drive 01)', interactableId: 'pickup_drive_01' },
+      { id: 's2_basha_decrypt', sector: 2, label: 'SE Outpost Basha Site (Decrypt Drive 01)', bashaId: 'basha_s2' },
+      { id: 's2_lab_safe', sector: 2, label: 'NE VBS Field Lab Safe (Tier-1 Keycard)', interactableId: 'obj_lab_safe' },
+      { id: 's2_gate', sector: 2, label: 'Ravine Checkpoint Gate (Unlock)', interactableId: 'obj_outpost_gate', opensGates: ['outpost_east_gate'] },
+      // Sector 3
+      { id: 's3_pump_fuse', sector: 3, label: 'NE Ravine Watchtower (High-Amp Pump Fuse)', interactableId: 'pickup_pump_fuse' },
+      { id: 's3_intake_valve', sector: 3, label: 'SW Ravine Intake Sluice (Clear Line)', interactableId: 'obj_intake_valve' },
+      { id: 's3_ravine_breaker', sector: 3, label: 'NW Ravine Circuit Breaker (Install Fuse)', interactableId: 'obj_ravine_breaker' },
+      { id: 's3_pump_station', sector: 3, label: 'SE Ravine Pump Station (Drain Culvert)', interactableId: 'obj_pump_station', opensGates: ['culvert_entry_grate', 'culvert_grate'] },
+      { id: 's3_gate_ctrl', sector: 3, label: 'NE Ravine Perimeter Gate Release', interactableId: 'obj_ravine_gate_ctrl', opensGates: ['ravine_east_gate'] },
+      { id: 's3_cross_gate', sector: 3, label: 'Cross Perimeter Gate into Sector 4', x: 3130, y: 650 },
+      // Sector 4
+      { id: 's4_relay_tower', sector: 4, label: 'NE Guard Tower Interlock Relay', interactableId: 'obj_s4_relay_tower' },
+      { id: 's4_hydraulic_a', sector: 4, label: 'SW Bunker Hydraulic Lock A', interactableId: 'obj_s4_hydraulic_a' },
+      { id: 's4_override_truck', sector: 4, label: 'NW Command Truck Override Token', interactableId: 'obj_s4_override_truck' },
+      { id: 's4_hydraulic_b', sector: 4, label: 'SE East Bunker Hydraulic Lock B', interactableId: 'obj_s4_hydraulic_b' },
+      { id: 's4_purge_valve', sector: 4, label: 'West Bunker Pressure Purge Manifold', interactableId: 'obj_s4_purge_valve' },
+      { id: 's4_terminal', sector: 4, label: 'Blast Gate Terminal (Swipe Keycard & 15s Hold)', interactableId: 'obj_terminal', opensGates: ['blast_gate'] },
+      { id: 's4_extract', sector: 4, label: 'Facility Sub-Zero Extraction Zone', x: 4040, y: 660 }
+    ],
     beats: [
-      { sector: 1, title: 'Riverbank Insertion', pacing: 'Low tension — learn cover, salvage bolt cutters in flooded fishing hut, cut outpost fence.' },
-      { sector: 2, title: 'Logging Outpost & Field Lab', pacing: 'Rising tension — floodlights & patrols; recover Drive 01, decrypt at Field Cache for lab safe code (4719).' },
-      { sector: 3, title: 'Infected Ravine', pacing: 'Spike — mutated boars, spore sinkhole & surveillance drone; power pump station to drain culvert.' },
-      { sector: 4, title: 'Temenggor Blast Gate', pacing: 'Climax — acquire Tier-1 Keycard (safe or Ward), evade drone/tripwires, swipe terminal & survive 15 s hold.' }
+      { sector: 1, title: 'Riverbank Insertion', pacing: 'Low tension — acquire Boat Locker Key, salvage Bolt Cutters, cut north/south fence relays, breach Outpost Fence.' },
+      { sector: 2, title: 'Logging Outpost & Field Lab', pacing: 'Rising tension — grab Shed Key, sabotage Diesel Generator, recover Drive 01, decrypt at Basha, crack Lab Safe.' },
+      { sector: 3, title: 'Infected Ravine', pacing: 'Spike — salvage Pump Fuse, clear intake sluice, flip north breaker, power Pump Station past boars & spores.' },
+      { sector: 4, title: 'Temenggor Blast Gate', pacing: 'Climax — release guard-tower relay, hydraulic locks & command override under drone/Ward patrols, swipe terminal & hold 15 s.' }
     ]
   };
 
@@ -6198,22 +6314,27 @@ window.__resolveBelumAsset = function(p) {
       { type: 'barracks', x: 1140, y: 210, width: 280, height: 150, label: 'LOGGING BARRACKS' },
       { type: 'barracks', x: 1580, y: 195, width: 250, height: 150, label: 'VBS FIELD LAB TENT' },
       { type: 'generator_shed', x: 1220, y: 900, width: 230, height: 135, label: 'DIESEL GENERATOR SHED' },
-      { type: 'fence', x: 1065, y: 390, width: 26, height: 150 },
+      // Fix 1: Boundary 1->2 (x=1065) sealed y=0..1320 leaving only outpost_fence_gate (y=540..760)
+      { id: 'barrier_s1_north', type: 'fence', x: 1065, y: 0, width: 28, height: 540, solid: true },
       // Task 4 Gate 1->2: Outpost Chain-Link Gate (requires Bolt Cutters)
-      { id: 'outpost_fence_gate', type: 'sector_gate', x: 1065, y: 540, width: 26, height: 220, solid: true, label: 'OUTPOST FENCE' },
-      { type: 'fence', x: 1065, y: 760, width: 26, height: 180 },
+      { id: 'outpost_fence_gate', type: 'sector_gate', x: 1065, y: 540, width: 28, height: 220, solid: true, label: 'OUTPOST FENCE' },
+      { id: 'barrier_s1_south', type: 'fence', x: 1065, y: 760, width: 28, height: 560, solid: true },
       { type: 'hollow_log', x: 1360, y: 610, width: 155, height: 80 },
       { type: 'fern', x: 1150, y: 660, width: 118, height: 84 },
       { type: 'fern', x: 1560, y: 730, width: 122, height: 88 },
       { type: 'fern', x: 1840, y: 465, width: 116, height: 84 },
       { type: 'bamboo', x: 1960, y: 190, width: 135, height: 130 },
       { type: 'bamboo', x: 1930, y: 960, width: 135, height: 130 },
+      // Fix 1: Boundary 2->3 (x=2135) sealed y=0..1320 with log-and-wire barricade leaving only outpost_east_gate (y=540..760)
+      { id: 'barrier_s2_north', type: 'barricade', x: 2135, y: 0, width: 30, height: 540, solid: true },
       // Task 4 Gate 2->3: Outpost East Security Gate (requires Drive 01)
-      { id: 'outpost_east_gate', type: 'sector_gate', x: 2135, y: 540, width: 26, height: 220, solid: true, label: 'RAVINE CHECKPOINT' },
+      { id: 'outpost_east_gate', type: 'sector_gate', x: 2135, y: 540, width: 30, height: 220, solid: true, label: 'RAVINE CHECKPOINT' },
+      { id: 'barrier_s2_south', type: 'barricade', x: 2135, y: 760, width: 30, height: 560, solid: true },
 
       // === SECTOR 3: The Infected Ravine (Spore Zone & Boars) ===
-      { type: 'bunker_wall', x: 2180, y: 90, width: 960, height: 110 },
-      { type: 'bunker_wall', x: 2180, y: 1080, width: 960, height: 120 },
+      { type: 'bunker_wall', x: 2180, y: 0, width: 910, height: 65 },
+      { type: 'bunker_wall', x: 2180, y: 1245, width: 910, height: 75 },
+      { type: 'guard_tower', x: 2945, y: 155, width: 84, height: 92, label: 'RAVINE WATCHTOWER' },
       { type: 'canopy_tree', x: 2220, y: 215, width: 160, height: 240, colX: 2275, colY: 385, colW: 54, colH: 58 },
       { type: 'mud_rocks', x: 2775, y: 895, width: 140, height: 70 },
       { type: 'hollow_log', x: 2290, y: 470, width: 160, height: 82 },
@@ -6222,16 +6343,19 @@ window.__resolveBelumAsset = function(p) {
       { type: 'hollow_log', x: 2630, y: 810, width: 165, height: 84 },
       { type: 'fern', x: 2875, y: 430, width: 120, height: 86 },
       { type: 'bamboo', x: 2430, y: 910, width: 125, height: 125 },
-      { type: 'fence', x: 3090, y: 230, width: 26, height: 270 },
+      // Fix 1: Boundary 3->4 (x=3090) sealed y=0..1320 leaving only ravine_east_gate (y=500..800) and locked culvert_entry_grate (y=985..1080)
+      { id: 'barrier_s3_north', type: 'fence', x: 3090, y: 0, width: 28, height: 500, solid: true },
       // Task 4 Gate 3->4: Ravine East Gate (powered by Pump Station)
-      { id: 'ravine_east_gate', type: 'sector_gate', x: 3090, y: 500, width: 26, height: 300, solid: true, label: 'PERIMETER GATE' },
-      { type: 'fence', x: 3090, y: 800, width: 26, height: 250 },
+      { id: 'ravine_east_gate', type: 'sector_gate', x: 3090, y: 500, width: 28, height: 300, solid: true, label: 'PERIMETER GATE' },
+      { id: 'barrier_s3_mid', type: 'fence', x: 3090, y: 800, width: 28, height: 185, solid: true },
+      { id: 'culvert_entry_grate', type: 'culvert_grate', x: 3090, y: 985, width: 28, height: 95, solid: true },
+      { id: 'barrier_s3_south', type: 'fence', x: 3090, y: 1080, width: 28, height: 240, solid: true },
 
       // === SECTOR 4: Temenggor Perimeter Blast Gate ===
-      { type: 'bunker_wall', x: 3260, y: 180, width: 650, height: 95 },
-      { type: 'bunker_wall', x: 3825, y: 275, width: 90, height: 255 },
-      { type: 'bunker_wall', x: 3825, y: 785, width: 90, height: 195 },
-      { type: 'bunker_wall', x: 3260, y: 1095, width: 655, height: 95 },
+      { type: 'bunker_wall', x: 3160, y: 0, width: 755, height: 65 },
+      { type: 'bunker_wall', x: 3825, y: 65, width: 90, height: 465 },
+      { type: 'bunker_wall', x: 3825, y: 785, width: 90, height: 460 },
+      { type: 'bunker_wall', x: 3160, y: 1245, width: 755, height: 75 },
       // Sector 4 Secondary & Side Area Props
       { type: 'radio_truck', x: 3340, y: 295, width: 150, height: 74, label: "WARD'S RADIO TRUCK" },
       { type: 'guard_tower', x: 3690, y: 285, width: 86, height: 96, label: 'GUARD TOWER' },
@@ -6244,14 +6368,14 @@ window.__resolveBelumAsset = function(p) {
       { id: 'blast_gate', type: 'blast_gate', x: 3825, y: 530, width: 95, height: 255, solid: true },
       // Task 6c: One hidden Basha Site (Field Cache) per sector
       { id: 'obs_basha_s1', type: 'basha_site', x: 440, y: 745, width: 108, height: 76, solid: false, blocksVision: false, blocksProjectiles: false, label: 'BASHA SITE (S1)' },
-      { id: 'obs_basha_s2', type: 'basha_site', x: 1830, y: 905, width: 108, height: 76, solid: false, blocksVision: false, blocksProjectiles: false, label: 'BASHA SITE (S2)' },
+      { id: 'obs_basha_s2', type: 'basha_site', x: 1925, y: 1140, width: 108, height: 76, solid: false, blocksVision: false, blocksProjectiles: false, label: 'BASHA SITE (S2)' },
       { id: 'obs_basha_s3', type: 'basha_site', x: 2215, y: 890, width: 108, height: 76, solid: false, blocksVision: false, blocksProjectiles: false, label: 'BASHA SITE (S3)' },
       { id: 'obs_basha_s4', type: 'basha_site', x: 3270, y: 850, width: 108, height: 76, solid: false, blocksVision: false, blocksProjectiles: false, label: 'BASHA SITE (S4)' }
     ];
 
     const bashaSites = [
       { id: 'basha_s1', sector: 1, x: 494, y: 785, label: 'Riverbank Basha Site', discovered: false, restedThisVisit: false },
-      { id: 'basha_s2', sector: 2, x: 1884, y: 945, label: 'Outpost Perimeter Basha', discovered: false, restedThisVisit: false },
+      { id: 'basha_s2', sector: 2, x: 1980, y: 1180, label: 'Outpost Perimeter Basha', discovered: false, restedThisVisit: false },
       { id: 'basha_s3', sector: 3, x: 2269, y: 930, label: 'Ravine Ledge Basha', discovered: false, restedThisVisit: false },
       { id: 'basha_s4', sector: 4, x: 3324, y: 890, label: 'Bunker Approach Basha', discovered: false, restedThisVisit: false }
     ];
@@ -6278,25 +6402,29 @@ window.__resolveBelumAsset = function(p) {
       { id: 'lw_2', x1: 3710, y1: 690, x2: 3710, y2: 810, active: true }
     ];
 
-    // Interactables, Objectives & Side-Area Caches (Task 4: floor pickup_keycard removed!)
+    // Interactables, Objectives & Side-Area Caches (Task 4 + Fix 2 zig-zag detours; floor pickup_keycard removed)
     const interactables = [
-      // Sector 1: Riverbank + Flooded Fishing Hut side area
+      // Sector 1: Riverbank + North Watchpost + SW Fishing Hut + NW/SE Fence Breakers
       { id: 'pickup_parang', type: 'weapon_parang', x: 275, y: 635, badge: 'PRG', label: 'Steel Parang', highlight: true, collected: false },
       { id: 'pickup_crossbow', type: 'weapon_crossbow', x: 500, y: 475, badge: 'BOW', label: 'Crossbow (+5 Bolts)', highlight: true, collected: false },
-      { id: 'pickup_bolt_cutters', type: 'bolt_cutters', x: 245, y: 1035, badge: 'CUT', label: 'Boat Locker [Bolt Cutters]', highlight: true, collected: false },
-      { id: 'cache_s1_footlocker', type: 'side_footlocker', x: 320, y: 1035, badge: 'FLK', label: 'Fishing Hut Footlocker', collected: false },
+      { id: 'pickup_locker_key', type: 'locker_key', x: 965, y: 90, badge: 'KEY', label: 'North Sentry Crate [Boat Locker Key]', highlight: true, collected: false },
+      { id: 'pickup_bolt_cutters', type: 'bolt_cutters', x: 345, y: 1185, badge: 'CUT', label: 'Boat Locker [Bolt Cutters]', highlight: true, collected: false },
+      { id: 'obj_s1_breaker_north', type: 's1_breaker_north', x: 225, y: 90, badge: 'PWR', label: 'NW Fence Voltage Feeder [Cut w/ Cutters]', highlight: true, collected: false },
+      { id: 'obj_s1_breaker_south', type: 's1_breaker_south', x: 965, y: 1200, badge: 'GND', label: 'SE Outpost Grounding Relay [Cut w/ Cutters]', highlight: true, collected: false },
+      { id: 'cache_s1_footlocker', type: 'side_footlocker', x: 395, y: 1035, badge: 'FLK', label: 'Fishing Hut Footlocker', collected: false },
       { id: 'sec_body_cam', type: 'sec_body_cam', x: 840, y: 920, badge: 'CAM', label: 'VBS Courier Body Camera', highlight: true, collected: false },
       { id: 'obj_cut_fence', type: 'cut_fence', x: 1035, y: 645, badge: 'FNC', label: 'Outpost Fence [Cut w/ Bolt Cutters]', highlight: true, collected: false },
       { id: 'pickup_water_1', type: 'dirty_water', x: 245, y: 800, badge: 'H2O', label: 'Rainwater Catch', collected: false },
       { id: 'pickup_bamboo_1', type: 'bamboo_shoots', x: 890, y: 420, badge: 'BMB', label: 'Wild Bamboo Shoots', collected: false },
       { id: 'pickup_can_s1', type: 'salvage_can_pebbles', x: 605, y: 860, badge: 'CAN', label: 'Empty Can & Pebbles', collected: false },
 
-      // Sector 2: Logging Outpost + Field Lab + Diesel Shed Back Room
-      { id: 'pickup_drive_01', type: 'encrypted_drive', x: 1705, y: 385, badge: 'DRV', label: 'Encrypted Drive 01', highlight: true, collected: false },
-      { id: 'obj_lab_safe', type: 'lab_safe', x: 1635, y: 385, badge: 'SAF', label: 'VBS Lab Safe [4-Digit Code]', highlight: true, collected: false },
+      // Sector 2: Logging Outpost + Shed Shutoff Key -> Diesel Generator -> Field Lab Back Room Drive 01 -> Basha Decrypt -> Lab Safe
+      { id: 'pickup_shed_key', type: 'shed_key', x: 2025, y: 105, badge: 'SHD', label: 'NE Barracks Lockbox [Diesel Shed Key]', highlight: true, collected: false },
+      { id: 'obj_generator', type: 'generator', x: 1245, y: 1185, badge: 'GEN', label: 'Diesel Generator [Shut Down Power]', highlight: true, collected: false },
+      { id: 'pickup_drive_01', type: 'encrypted_drive', x: 1210, y: 110, badge: 'DRV', label: 'Field Lab Back Room [Drive 01]', highlight: true, collected: false },
+      { id: 'obj_lab_safe', type: 'lab_safe', x: 1995, y: 115, badge: 'SAF', label: 'VBS Lab Safe [4-Digit Code]', highlight: true, collected: false },
       { id: 'sec_photo_samples', type: 'sec_photo_samples', x: 1765, y: 390, badge: 'PHO', label: 'Lab Samples [Hold E 2s to Photograph]', highlight: true, collected: false },
       { id: 'pickup_pistol', type: 'weapon_pistol', x: 1475, y: 385, badge: '9MM', label: 'Suppressed 9mm (+8)', highlight: true, collected: false },
-      { id: 'obj_generator', type: 'generator', x: 1335, y: 870, badge: 'GEN', label: 'Diesel Generator [Sabotage]', highlight: true, collected: false },
       { id: 'pickup_diesel_rag', type: 'salvage_diesel_rag', x: 1245, y: 885, badge: 'DSL', label: 'Diesel Fuel & Cloth Rag', collected: false },
       { id: 'pickup_flare_s2', type: 'salvage_flare', x: 1555, y: 860, badge: 'FLR', label: 'Road Flare & Wire', collected: false },
       { id: 'pickup_filter_mask', type: 'filter_mask', x: 2010, y: 440, badge: 'MSK', label: 'Respirator Filter Mask (90s)', highlight: true, collected: false },
@@ -6305,25 +6433,34 @@ window.__resolveBelumAsset = function(p) {
       { id: 'pickup_wire_1', type: 'scrap_wire', x: 1845, y: 840, badge: 'WIR', label: 'Scrap Wire', collected: false },
       { id: 'obj_outpost_gate', type: 'outpost_gate', x: 2105, y: 645, badge: 'GAT', label: 'Ravine Checkpoint Gate [Need Drive 01]', highlight: true, collected: false },
 
-      // Sector 3: Infected Ravine + Pump Station + Spore Sinkhole + Captured Scientist
+      // Sector 3: Infected Ravine + Watchtower Pump Fuse + SW Intake Sluice + NW Breaker -> SE Pump Station
+      { id: 'pickup_pump_fuse', type: 'pump_fuse', x: 2985, y: 110, badge: 'FUS', label: 'Ravine Watchtower [High-Amp Pump Fuse]', highlight: true, collected: false },
+      { id: 'obj_intake_valve', type: 'intake_valve', x: 2240, y: 1185, badge: 'VLV', label: 'SW Ravine Intake Sluice [Open]', highlight: true, collected: false },
+      { id: 'obj_ravine_breaker', type: 'ravine_breaker', x: 2240, y: 110, badge: 'BRK', label: 'NW Ravine Circuit Breaker [Install Fuse]', highlight: true, collected: false },
+      { id: 'obj_pump_station', type: 'pump_station', x: 2985, y: 1180, badge: 'PMP', label: 'Pump Station [Restore Power]', highlight: true, collected: false },
+      { id: 'obj_ravine_gate_ctrl', type: 'ravine_gate_ctrl', x: 3035, y: 135, badge: 'REL', label: 'NE Ravine Perimeter Gate Release', highlight: true, collected: false },
       { id: 'pickup_rocks_1', type: 'decoy_rocks', x: 2295, y: 605, badge: 'NOI', label: 'Noisemakers (+5)', highlight: true, collected: false },
       { id: 'pickup_water_2', type: 'dirty_water', x: 2390, y: 780, badge: 'H2O', label: 'Ravine Runoff', collected: false },
       { id: 'sec_free_scientist', type: 'sec_free_scientist', x: 2340, y: 375, badge: 'SCI', label: 'Captured VBS Scientist [Free]', highlight: true, collected: false },
       { id: 'cache_s3_cold_storage', type: 'side_cold_storage', x: 2665, y: 745, badge: 'LAB', label: 'Sinkhole Cold-Storage Unit', collected: false },
       { id: 'pickup_radio_parts_s3', type: 'salvage_radio_parts', x: 2790, y: 890, badge: 'RAD', label: 'Radio Parts & Battery', collected: false },
-      { id: 'obj_pump_station', type: 'pump_station', x: 2945, y: 955, badge: 'PMP', label: 'Pump Station [Restore Power]', highlight: true, collected: false },
       { id: 'pickup_drive_02', type: 'encrypted_drive', x: 2985, y: 875, badge: 'DRV', label: 'Encrypted Drive 02', highlight: true, collected: false },
 
-      // Sector 4: Blast Gate + Radio Truck + Guard Tower
+      // Sector 4: Blast Gate + Guard Tower Relay + Hydraulic Locks A & B + Command Truck Override + Pressure Purge -> Blast Terminal
+      { id: 'obj_s4_relay_tower', type: 's4_relay_tower', x: 3760, y: 115, badge: 'RLY', label: 'NE Guard Tower [Disable Blast Interlock]', highlight: true, collected: false },
+      { id: 'obj_s4_hydraulic_a', type: 's4_hydraulic_a', x: 3205, y: 1180, badge: 'HYA', label: 'SW Bunker Hydraulic Lock A [Release]', highlight: true, collected: false },
+      { id: 'obj_s4_override_truck', type: 's4_override_truck', x: 3220, y: 115, badge: 'OVR', label: 'NW Command Relay [Blast Override Token]', highlight: true, collected: false },
+      { id: 'obj_s4_hydraulic_b', type: 's4_hydraulic_b', x: 3765, y: 1175, badge: 'HYB', label: 'SE Bunker Hydraulic Lock B [Release]', highlight: true, collected: false },
+      { id: 'obj_s4_purge_valve', type: 's4_purge_valve', x: 3205, y: 645, badge: 'PRG', label: 'West Bunker Pressure Purge Manifold', highlight: true, collected: false },
       { id: 'sec_gps_truck', type: 'sec_gps_truck', x: 3420, y: 380, badge: 'GPS', label: "Ward's Radio Truck [Plant GPS]", highlight: true, collected: false },
       { id: 'cache_s4_tower', type: 'side_guard_tower', x: 3730, y: 395, badge: 'JAM', label: 'Guard Tower [Radio Jammer Parts]', collected: false },
       { id: 'obj_culvert', type: 'culvert_unlock', x: 3525, y: 1030, badge: 'CLV', label: 'Culvert Hatch [Drained by Pump]', highlight: true, collected: false },
       { id: 'obj_terminal', type: 'blast_terminal', x: 3785, y: 495, badge: 'TRM', label: 'Blast Gate Terminal [Swipe Keycard]', highlight: true, collected: false }
     ];
 
-    // Enemies: Mercenaries (Sector 1, 2, 3 Checkpoint, 4 Commander Ward + Spotter)
+    // Enemies: Mercenaries (Fix 2: +1 patrolling guard per sector on the required route!)
     const mercSpecs = [
-      // Sector 1: 1 lone Ironclad guard positioned for rear Parang stealth takedown
+      // Sector 1: Teaching guard near start + Fix 2 new fence/south grounding patrol
       {
         id: 'merc_s1_1',
         sector: 1,
@@ -6335,7 +6472,18 @@ window.__resolveBelumAsset = function(p) {
           { x: 930, y: 625 }
         ]
       },
-      // Sector 2: 3 Ironclad riflemen with intersecting patrols
+      {
+        id: 'merc_s1_2',
+        sector: 1,
+        x: 945,
+        y: 960,
+        facingAngle: Math.PI * 0.5,
+        waypoints: [
+          { x: 945, y: 760 },
+          { x: 945, y: 1140 }
+        ]
+      },
+      // Sector 2: 3 Outpost riflemen + Fix 2 new south diesel/gate patrol
       {
         id: 'merc_s2_1',
         sector: 2,
@@ -6369,7 +6517,18 @@ window.__resolveBelumAsset = function(p) {
           { x: 2040, y: 710 }
         ]
       },
-      // Sector 3: Ironclad Checkpoint blocking Ravine exit (prime target for Boar Faction Infighting!)
+      {
+        id: 'merc_s2_4',
+        sector: 2,
+        x: 1560,
+        y: 1100,
+        facingAngle: Math.PI,
+        waypoints: [
+          { x: 1360, y: 1100 },
+          { x: 1840, y: 1100 }
+        ]
+      },
+      // Sector 3: Ravine Checkpoint guards + Fix 2 new north watchtower/breaker patrol
       {
         id: 'merc_s3_1',
         sector: 3,
@@ -6392,7 +6551,18 @@ window.__resolveBelumAsset = function(p) {
           { x: 2940, y: 660 }
         ]
       },
-      // Sector 4: Outpost Commander Ward + Spotter Guard
+      {
+        id: 'merc_s3_3',
+        sector: 3,
+        x: 2560,
+        y: 260,
+        facingAngle: 0,
+        waypoints: [
+          { x: 2350, y: 260 },
+          { x: 2860, y: 260 }
+        ]
+      },
+      // Sector 4: Spotter + Commander Ward + Fix 2 new south courtyard/hydraulic patrol
       {
         id: 'merc_s4_spotter',
         sector: 4,
@@ -6418,6 +6588,17 @@ window.__resolveBelumAsset = function(p) {
         waypoints: [
           { x: 3660, y: 550 },
           { x: 3660, y: 740 }
+        ]
+      },
+      {
+        id: 'merc_s4_courtyard',
+        sector: 4,
+        x: 3480,
+        y: 1120,
+        facingAngle: Math.PI,
+        waypoints: [
+          { x: 3260, y: 1120 },
+          { x: 3710, y: 1120 }
         ]
       }
     ];
@@ -6466,13 +6647,21 @@ window.__resolveBelumAsset = function(p) {
       mercenaries,
       boars,
       drones,
+      s1BreakerNorthCut: false,
+      s1BreakerSouthCut: false,
       fenceCut: false,
       outpostGateOpen: false,
+      intakeValveOpen: false,
+      ravineBreakerPowered: false,
       pumpPowered: false,
       culvertDrained: false,
       labSafeOpened: false,
       generatorSabotaged: false,
       culvertUnlocked: false,
+      s4RelayOff: false,
+      s4HydraulicA: false,
+      s4OverrideToken: false,
+      s4HydraulicB: false,
       blastGateOpening: false,
       blastGateOpen: false,
       blastGateTimer: 15.0,
@@ -7491,8 +7680,11 @@ window.__resolveBelumAsset = function(p) {
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (it.collected) continue;
+        const dist = state.player
+          ? Math.hypot(it.x - state.player.centerX, it.y - state.player.centerY)
+          : Infinity;
 
-        // Bespoke 2.5D Biometric Keycard Terminal Pedestal
+        // Bespoke 2.5D Biometric Keycard Terminal Pedestal (world prop visible, label <= 120 px only)
         if (it.type === 'blast_terminal') {
           const ped = this.sprites && this.sprites.keycard_pedestal;
           ctx.save();
@@ -7502,14 +7694,38 @@ window.__resolveBelumAsset = function(p) {
             const pulse = 0.55 + 0.45 * Math.sin(this.time * 5);
             ctx.fillStyle = `rgba(248, 90, 90, ${pulse.toFixed(3)})`;
             ctx.fillRect(it.x - 9, it.y - 22, 18, 3);
-            ctx.fillStyle = PALETTE.inkMid;
-            ctx.font = 'bold 10px "Courier New", monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(it.label || '', it.x, it.y - 58);
+            if (dist <= 120) {
+              ctx.fillStyle = PALETTE.inkMid;
+              ctx.font = 'bold 10px "Courier New", monospace';
+              ctx.textAlign = 'center';
+              ctx.fillText(it.label || '', it.x, it.y - 58);
+            }
             ctx.restore();
             continue;
           }
           ctx.restore();
+        }
+
+        // Fix 4: Beyond 220 px draw nothing; 120..220 px draw only a small ink sparkle; <= 120 px draw badge & label
+        if (dist > 220) continue;
+
+        if (dist > 120) {
+          const glint = 0.45 + 0.55 * Math.abs(Math.sin(this.time * 3.2 + i * 1.7));
+          const r = 4.5 + glint * 2.5;
+          ctx.save();
+          ctx.translate(it.x, it.y - 4);
+          ctx.strokeStyle = `rgba(17, 30, 51, ${(0.35 + glint * 0.45).toFixed(3)})`;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+          ctx.moveTo(0, -r); ctx.lineTo(0, r);
+          ctx.stroke();
+          ctx.fillStyle = it.highlight ? `rgba(248, 90, 90, ${(0.45 + glint * 0.4).toFixed(3)})` : `rgba(17, 30, 51, ${(0.45 + glint * 0.4).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(0, 0, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          continue;
         }
 
         const bob = Math.sin(this.time * 3.5 + i) * 3;
@@ -7557,6 +7773,43 @@ window.__resolveBelumAsset = function(p) {
           ctx.font = 'bold 10px "Courier New", monospace';
           ctx.fillText(it.label || '', 0, -20);
         }
+        ctx.restore();
+      }
+
+      // Fix 4: Hidden Basha Sites show NO label and NO marker until discovered (within 150 px).
+      // After discovery, show a small tarp-shelter icon with NO text from any distance.
+      // TODO: replace icon with assets/ui/status_icons_sheet.png icon 8 (tarp shelter)
+      const bashaSites = (state.level && state.level.bashaSites) || [];
+      for (let i = 0; i < bashaSites.length; i++) {
+        const site = bashaSites[i];
+        if (!site.discovered) continue;
+        ctx.save();
+        ctx.translate(site.x, site.y - 44);
+        ctx.fillStyle = PALETTE.paperBase;
+        ctx.strokeStyle = PALETTE.inkDeep;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(0, 0, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        // Sloped tarp-shelter silhouette (no text)
+        ctx.fillStyle = '#E6DAC0';
+        ctx.beginPath();
+        ctx.moveTo(-9, 5);
+        ctx.lineTo(-1, -6);
+        ctx.lineTo(9, -2);
+        ctx.lineTo(7, 6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(-1, -6);
+        ctx.lineTo(0, 6);
+        ctx.stroke();
+        ctx.fillStyle = PALETTE.crimson;
+        ctx.beginPath();
+        ctx.arc(4, 3, 1.6, 0, Math.PI * 2);
+        ctx.fill();
         ctx.restore();
       }
     }
@@ -7855,7 +8108,7 @@ window.__resolveBelumAsset = function(p) {
           : '<div class="utility-item">No VBS drives decrypted yet. Recover Encrypted Drive 01 in the Logging Outpost and decrypt it at a Field Cache (basha site).</div>';
         this.utilityBody.innerHTML = `
           <p><strong>OPERATOR:</strong> Kancil (Codename: SPECTRE) &bull; <strong>REGION:</strong> Belum-Temengor Rainforest, Perak</p>
-          <p><strong>PRIMARY DIRECTIVE:</strong> Infiltrate Sungai Belum, secure Tier-1 Clearance (Lab Safe 4719 or Commander Ward), and breach the Temenggor Perimeter Blast Gate.</p>
+          <p><strong>PRIMARY DIRECTIVE:</strong> Infiltrate Sungai Belum, secure Tier-1 Clearance (Lab Safe or Commander Ward), and breach the Temenggor Perimeter Blast Gate.</p>
           <h3 style="margin:12px 0 6px;font-size:13px;letter-spacing:1px;">SERVICE RECORD // OPERATOR PROFICIENCY</h3>
           <div class="utility-grid" id="service-record-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">${serviceHtml}</div>
           <h3 style="margin:14px 0 6px;font-size:13px;letter-spacing:1px;">RECOVERED TELEMETRY &amp; INTEL</h3>
@@ -8154,7 +8407,7 @@ window.__resolveBelumAsset = function(p) {
 
       // Objectives scroll
       if (this.questListEl && Array.isArray(state.objectives)) {
-        const key = state.objectives.map((o) => `${o.id}:${o.done}`).join('|');
+        const key = state.objectives.map((o) => `${o.id}:${o.done}:${o.text}`).join('|');
         if (key !== this._lastObjectiveKey) {
           this._lastObjectiveKey = key;
           let foundActive = false;
@@ -8618,7 +8871,10 @@ window.__resolveBelumAsset = function(p) {
   const VALID_WEAPONS = ['parang', 'crossbow', 'pistol', 'decoy'];
   const INVENTORY_SCHEMA = {
     hasParangPickup: 'boolean',
+    hasLockerKey: 'boolean',
     hasBoltCutters: 'boolean',
+    hasShedKey: 'boolean',
+    hasPumpFuse: 'boolean',
     hasSafeCode: 'boolean',
     hasKeycard: 'boolean',
     encryptedDrives: 'number',
@@ -9255,7 +9511,7 @@ window.__resolveBelumAsset = function(p) {
             this.level.pumpPowered = true;
             this.level.culvertDrained = true;
             openGateById('ravine_east_gate');
-            openGateById('culvert_grate');
+            openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           }
           if (cp.flags.labSafeOpened) {
             this.level.labSafeOpened = true;
@@ -9268,7 +9524,7 @@ window.__resolveBelumAsset = function(p) {
           }
           if (cp.flags.culvertUnlocked) {
             this.level.culvertUnlocked = true;
-            openGateById('culvert_grate');
+            openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           }
           if (cp.flags.blastGateOpen) {
             this.level.blastGateOpen = true;
@@ -9636,7 +9892,7 @@ window.__resolveBelumAsset = function(p) {
         { id: 'cut_fence', text: 'Find Bolt Cutters (Fishing Hut) & cut Outpost Fence', done: !!l.fenceCut },
         { id: 'drive', text: 'Recover Drive 01 in VBS Field Lab (unlock Ravine Gate)', done: hasDrive1 && !!l.outpostGateOpen },
         { id: 'pump', text: 'Restore Ravine Pump Station power (drain Culvert)', done: !!l.pumpPowered },
-        { id: 'keycard', text: 'Get Tier-1 Keycard (Lab Safe 4719 or Cmdr Ward)', done: !!p.inventory.hasKeycard },
+        { id: 'keycard', text: p.inventory.hasSafeCode ? 'Get Tier-1 Keycard (Lab Safe code 4719 or Cmdr Ward)' : 'Get Tier-1 Keycard (Lab Safe or Cmdr Ward)', done: !!p.inventory.hasKeycard },
         { id: 'gate', text: 'Swipe Keycard & survive 15s Blast Gate hold', done: !!l.blastGateOpen },
         { id: 'extract', text: 'Enter Facility Sub-Zero Extraction Zone', done: this.mode === 'VICTORY' },
         { id: 'secondary', text: `Secondary Objectives (${secCount}/4 complete)`, done: secCount === 4 }
@@ -10532,14 +10788,45 @@ window.__resolveBelumAsset = function(p) {
           p.unlockedWeapons.pistol = true;
           p.ammo.pistol += 8;
           if (this.hud) this.hud.showToast('ACQUIRED SUPPRESSED 9MM PISTOL (+8 ROUNDS)', 2.8);
+        } else if (it.type === 'locker_key') {
+          it.collected = true;
+          p.inventory.hasLockerKey = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SALVAGED BOAT LOCKER KEY — UNLOCK FISHING HUT BOAT LOCKER', 3.0);
         } else if (it.type === 'bolt_cutters') {
+          if (!p.inventory.hasLockerKey) {
+            if (this.hud) this.hud.showToast('BOAT LOCKER PADLOCKED — FIND LOCKER KEY AT NORTH SENTRY CRATE', 3.0);
+            return;
+          }
           it.collected = true;
           p.inventory.hasBoltCutters = true;
           if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
-          if (this.hud) this.hud.showToast('SALVAGED HEAVY BOLT CUTTERS — CUT THE OUTPOST FENCE', 3.0);
+          if (this.hud) this.hud.showToast('SALVAGED HEAVY BOLT CUTTERS — CUT NW & SE FENCE RELAYS', 3.2);
+        } else if (it.type === 's1_breaker_north') {
+          if (!p.inventory.hasBoltCutters) {
+            if (this.hud) this.hud.showToast('NEED BOLT CUTTERS TO SEVER NW FENCE VOLTAGE FEEDER', 2.8);
+            return;
+          }
+          it.collected = true;
+          this.level.s1BreakerNorthCut = true;
+          this._emitAcousticRing(it.x, it.y, 120, false);
+          if (this.hud) this.hud.showToast('NW FENCE VOLTAGE FEEDER SEVERED (1/2)', 2.8);
+        } else if (it.type === 's1_breaker_south') {
+          if (!p.inventory.hasBoltCutters) {
+            if (this.hud) this.hud.showToast('NEED BOLT CUTTERS TO SEVER SE OUTPOST GROUNDING RELAY', 2.8);
+            return;
+          }
+          it.collected = true;
+          this.level.s1BreakerSouthCut = true;
+          this._emitAcousticRing(it.x, it.y, 120, false);
+          if (this.hud) this.hud.showToast('SE OUTPOST GROUNDING RELAY SEVERED — FENCE DE-ENERGIZED!', 3.0);
         } else if (it.type === 'cut_fence') {
           if (!p.inventory.hasBoltCutters) {
             if (this.hud) this.hud.showToast('LOCKED FENCE — FIND BOLT CUTTERS IN SOUTH FISHING HUT BOAT LOCKER', 3.0);
+            return;
+          }
+          if (!this.level.s1BreakerNorthCut || !this.level.s1BreakerSouthCut) {
+            if (this.hud) this.hud.showToast('FENCE ELECTRIFIED — CUT BOTH NW & SE FENCE RELAYS FIRST', 3.2);
             return;
           }
           it.collected = true;
@@ -10547,6 +10834,11 @@ window.__resolveBelumAsset = function(p) {
           openGateById('outpost_fence_gate');
           this._emitAcousticRing(it.x, it.y, 140, false);
           if (this.hud) this.hud.showToast('OUTPOST FENCE CUT OPEN — SECTOR 2 ACCESSIBLE!', 3.0);
+        } else if (it.type === 'shed_key') {
+          it.collected = true;
+          p.inventory.hasShedKey = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('ACQUIRED DIESEL SHED SHUTOFF KEY — KILL POWER AT SW GENERATOR', 3.2);
         } else if (it.type === 'lab_safe') {
           if (!p.inventory.hasSafeCode) {
             if (this.hud) this.hud.showToast('LAB SAFE LOCKED — DECRYPT DRIVE 01 AT A FIELD CACHE FOR 4-DIGIT CODE', 3.2);
@@ -10556,7 +10848,7 @@ window.__resolveBelumAsset = function(p) {
           this.level.labSafeOpened = true;
           p.inventory.hasKeycard = true;
           if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
-          if (this.hud) this.hud.showToast('SAFE CODE 4719 ACCEPTED — ACQUIRED TIER-1 SECURITY KEYCARD!', 3.4);
+          if (this.hud) this.hud.showToast('SAFE CODE ACCEPTED — ACQUIRED TIER-1 SECURITY KEYCARD!', 3.4);
         } else if (it.type === 'outpost_gate') {
           const hasDrive1 = p.inventory.encryptedDrives > 0 || p.inventory.decryptedLore.length > 0;
           if (!hasDrive1) {
@@ -10567,15 +10859,76 @@ window.__resolveBelumAsset = function(p) {
           this.level.outpostGateOpen = true;
           openGateById('outpost_east_gate');
           if (this.hud) this.hud.showToast('RAVINE CHECKPOINT UNLOCKED — ENTERING SECTOR 3!', 3.0);
+        } else if (it.type === 'pump_fuse') {
+          it.collected = true;
+          p.inventory.hasPumpFuse = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SALVAGED HIGH-AMP PUMP FUSE — INSTALL AT NW RAVINE BREAKER', 3.2);
+        } else if (it.type === 'intake_valve') {
+          it.collected = true;
+          this.level.intakeValveOpen = true;
+          this._emitAcousticRing(it.x, it.y, 140, false);
+          if (this.hud) this.hud.showToast('RAVINE INTAKE SLUICE CLEARED — LINE READY FOR PUMP POWER', 3.0);
+        } else if (it.type === 'ravine_breaker') {
+          if (!p.inventory.hasPumpFuse) {
+            if (this.hud) this.hud.showToast('BREAKER BLOWN — SALVAGE PUMP FUSE FROM NE RAVINE WATCHTOWER', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.ravineBreakerPowered = true;
+          this._emitAcousticRing(it.x, it.y, 160, false);
+          if (this.hud) this.hud.showToast('PUMP FUSE INSTALLED — POWER UP SE RAVINE PUMP STATION', 3.2);
         } else if (it.type === 'pump_station') {
+          if (!this.level.intakeValveOpen || !this.level.ravineBreakerPowered) {
+            if (this.hud) this.hud.showToast('PUMP OFFLINE — CLEAR SW INTAKE SLUICE & INSTALL FUSE AT NW BREAKER', 3.4);
+            return;
+          }
           it.collected = true;
           this.level.pumpPowered = true;
           this.level.culvertDrained = true;
           this.level.culvertUnlocked = true;
-          openGateById('ravine_east_gate');
-          openGateById('culvert_grate');
+          openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           this._emitAcousticRing(it.x, it.y, 260, false);
-          if (this.hud) this.hud.showToast('PUMP STATION POWERED — CULVERT DRAINED & PERIMETER GATE OPEN!', 3.4);
+          if (this.hud) this.hud.showToast('PUMP STATION POWERED — CULVERT DRAINED! HIT NE PERIMETER GATE RELEASE', 3.4);
+        } else if (it.type === 'ravine_gate_ctrl') {
+          if (!this.level.pumpPowered) {
+            if (this.hud) this.hud.showToast('PERIMETER GATE UNPOWERED — RESTORE SE RAVINE PUMP STATION FIRST', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.ravineGateReleased = true;
+          openGateById('ravine_east_gate');
+          this._emitAcousticRing(it.x, it.y, 180, false);
+          if (this.hud) this.hud.showToast('PERIMETER GATE RELEASED — SECTOR 4 ACCESSIBLE!', 3.2);
+        } else if (it.type === 's4_relay_tower') {
+          it.collected = true;
+          this.level.s4RelayOff = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('NE GUARD TOWER BLAST INTERLOCK DISABLED', 2.8);
+        } else if (it.type === 's4_hydraulic_a') {
+          it.collected = true;
+          this.level.s4HydraulicA = true;
+          this._emitAcousticRing(it.x, it.y, 150, false);
+          if (this.hud) this.hud.showToast('SW BUNKER HYDRAULIC LOCK A RELEASED', 2.8);
+        } else if (it.type === 's4_override_truck') {
+          it.collected = true;
+          this.level.s4OverrideToken = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('CAPTURED BLAST GATE ROLLING OVERRIDE TOKEN FROM COMMAND RELAY', 3.0);
+        } else if (it.type === 's4_hydraulic_b') {
+          it.collected = true;
+          this.level.s4HydraulicB = true;
+          this._emitAcousticRing(it.x, it.y, 150, false);
+          if (this.hud) this.hud.showToast('SE BUNKER HYDRAULIC LOCK B RELEASED — PURGE WEST MANIFOLD', 3.0);
+        } else if (it.type === 's4_purge_valve') {
+          if (!this.level.s4HydraulicA || !this.level.s4HydraulicB) {
+            if (this.hud) this.hud.showToast('MANIFOLD LOCKED — RELEASE HYDRAULIC LOCKS A & B FIRST', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.s4PurgeDone = true;
+          this._emitAcousticRing(it.x, it.y, 180, false);
+          if (this.hud) this.hud.showToast('BUNKER PRESSURE PURGED — BLAST GATE TERMINAL ARMED FOR KEYCARD!', 3.2);
         } else if (it.type === 'sec_body_cam') {
           it.collected = true;
           if (this.level.secondaryObjectives) this.level.secondaryObjectives.bodyCam = true;
@@ -10676,6 +11029,10 @@ window.__resolveBelumAsset = function(p) {
           p.inventory.battery = (p.inventory.battery || 0) + 1;
           if (this.hud) this.hud.showToast('SALVAGED RADIO PARTS (x2) & BATTERY — IMPROVISE RADIO JAMMER AT WORKBENCH', 3.0);
         } else if (it.type === 'encrypted_drive') {
+          if (it.id === 'pickup_drive_01' && !this.level.generatorSabotaged) {
+            if (this.hud) this.hud.showToast('FIELD LAB BACK ROOM MAGLOCKED — SHUT DOWN SW DIESEL GENERATOR FIRST', 3.4);
+            return;
+          }
           it.collected = true;
           p.inventory.encryptedDrives++;
           if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
@@ -10701,13 +11058,17 @@ window.__resolveBelumAsset = function(p) {
           p.ammo.crossbow += 1;
           if (this.hud) this.hud.showToast('RECOVERED CARBON BOLT (+1)', 1.5);
         } else if (it.type === 'generator') {
+          if (!p.inventory.hasShedKey) {
+            if (this.hud) this.hud.showToast('DIESEL SHED LOCKED — FIND SHUTOFF KEY AT NE BARRACKS LOCKBOX', 3.2);
+            return;
+          }
           it.collected = true;
           this.level.generatorSabotaged = true;
           for (let f = 0; f < this.level.floodlights.length; f++) {
             if (this.level.floodlights[f].sector === 2) this.level.floodlights[f].active = false;
           }
           this._emitAcousticRing(it.x, it.y, 290, false);
-          if (this.hud) this.hud.showToast('GENERATOR SABOTAGED — OUTPOST FLOODLIGHTS DARK!', 3.2);
+          if (this.hud) this.hud.showToast('GENERATOR SABOTAGED — FLOODLIGHTS DARK & FIELD LAB BACK ROOM UNLOCKED!', 3.4);
         } else if (it.type === 'culvert_unlock') {
           if (!this.level.culvertDrained && !p.inventory.hasKeycard) {
             if (this.hud) this.hud.showToast('CULVERT FLOODED — POWER SECTOR 3 PUMP STATION FIRST', 2.8);
@@ -10715,11 +11076,15 @@ window.__resolveBelumAsset = function(p) {
           }
           it.collected = true;
           this.level.culvertUnlocked = true;
-          openGateById('culvert_grate');
+          openGateById('culvert_grate'); openGateById('culvert_entry_grate');
           if (this.hud) this.hud.showToast('DRAINAGE CULVERT OPEN — STEALTH BYPASS CLEAR!', 3.0);
         } else if (it.type === 'blast_terminal') {
           if (!p.inventory.hasKeycard) {
-            if (this.hud) this.hud.showToast('ACCESS DENIED — GET TIER-1 KEYCARD (LAB SAFE 4719 OR CMDR WARD)', 3.2);
+            if (this.hud) this.hud.showToast('ACCESS DENIED — GET TIER-1 KEYCARD (LAB SAFE OR CMDR WARD)', 3.2);
+            return;
+          }
+          if (!this.level.s4RelayOff || !this.level.s4HydraulicA || !this.level.s4OverrideToken || !this.level.s4HydraulicB || !this.level.s4PurgeDone) {
+            if (this.hud) this.hud.showToast('BLAST GATE INTERLOCKED — CLEAR GUARD TOWER RELAY, OVERRIDE, HYDRAULIC LOCKS & PRESSURE PURGE', 3.6);
             return;
           }
           it.collected = true;
@@ -10971,15 +11336,20 @@ window.__resolveBelumAsset = function(p) {
         }
       }
 
-      // Task 6b: Leeches when wading in deep water or flooded culvert for > 4 s (-10% max stamina each, up to 3)
-      const inRiverEdge = this.currentSectorId === 1 && p.centerX < 210;
+      // Fix 3: Leeches attach only inside actual level.riverZone (x 0..135) or flooded culvert (> 4 s)
+      const rz = l.riverZone;
+      const inRiver = !!(
+        rz &&
+        p.centerX >= rz.x && p.centerX <= rz.x + rz.width &&
+        p.centerY >= rz.y && p.centerY <= rz.y + rz.height
+      );
       const cz = l.culvertZone;
       const inFloodedCulvert = !!(
         cz && !l.culvertDrained &&
         p.centerX >= cz.x && p.centerX <= cz.x + cz.width &&
         p.centerY >= cz.y && p.centerY <= cz.y + cz.height
       );
-      if (inRiverEdge || inFloodedCulvert) {
+      if (inRiver || inFloodedCulvert) {
         p.wadeTimer = (p.wadeTimer || 0) + dt;
         if (p.wadeTimer >= 4.0 && (p.leeches || 0) < 3) {
           p.wadeTimer = 0;
