@@ -147,15 +147,22 @@
       }
 
       // 3. Persistent Ground Stains & Environmental Traces:
-      //    Wet Mud Footprints -> Organic Fountain-Pen Ink-Bleed Death Puddles
+      //    Wet Mud Footprints -> Blood Drips -> Organic Fountain-Pen Ink-Bleed Death Puddles
       this._drawFootprints(ctx, state);
+      this._drawBloodDrips(ctx, state);
       this._drawInkPuddles(ctx, state);
 
-      // 4. Ground Layer Effects: Spores, Floodlights, Vision Cones, Telegraphs, Acoustic Rings, Tripwires
+      // 4. Ground Layer Effects: Spores, Floodlights, Vision Cones, Drone Cones, Telegraphs, Acoustic Rings, Tripwires
       this._drawGroundZones(ctx, state);
       this._drawVisionConesAndLasers(ctx, state);
+      if (Array.isArray(state.drones)) {
+        for (let i = 0; i < state.drones.length; i++) {
+          if (typeof state.drones[i].drawCone === 'function') state.drones[i].drawCone(ctx);
+        }
+      }
       this._drawTelegraphs(ctx, state);
       this._drawAcousticRings(ctx, state);
+      this._drawImprovisedGear(ctx, state);
       this._drawPickupsAndInteractables(ctx, state);
 
       // 5. 2.5D Y-SORTING DEPTH PASS
@@ -175,6 +182,9 @@
       if (Array.isArray(state.boars)) {
         for (let i = 0; i < state.boars.length; i++) drawables.push(state.boars[i]);
       }
+      if (Array.isArray(state.drones)) {
+        for (let i = 0; i < state.drones.length; i++) drawables.push(state.drones[i]);
+      }
       if (Array.isArray(state.projectiles)) {
         for (let i = 0; i < state.projectiles.length; i++) drawables.push(state.projectiles[i]);
       }
@@ -190,9 +200,10 @@
       // 6. Dynamic Blueprint Fog-of-War Hatching behind concrete bunker walls
       this._drawBlueprintFogOfWar(ctx, state);
 
-      // 7. Fluttering Ink Leaf Specks, Slash Arcs, Diegetic Calligraphic Badges & Floating Damage Numbers
+      // 7. Fluttering Ink Leaf Specks, Slash Arcs, Hold-E Progress Ring, Diegetic Badges & Floating Damage Numbers
       this._drawLeafParticles(ctx, state);
       this._drawSlashEffects(ctx, state);
+      this._drawHoldActionRing(ctx, state);
       this._drawDiegeticBadge(ctx, state);
       this._drawFloatingTexts(ctx, state);
 
@@ -387,6 +398,100 @@
           ctx.moveTo(fz.x + d, fz.y);
           ctx.lineTo(fz.x + d - fz.h, fz.y + fz.h);
           ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    _drawBloodDrips(ctx, state) {
+      const drips = state.bloodDrips || [];
+      if (drips.length === 0) return;
+      ctx.save();
+      for (let i = 0; i < drips.length; i++) {
+        const d = drips[i];
+        const alpha = Math.max(0.12, 1 - d.age / (d.duration || 14));
+        ctx.fillStyle = `rgba(248, 90, 90, ${(alpha * 0.85).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.ellipse(d.x, d.y, 4.2, 2.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(17, 30, 51, ${(alpha * 0.45).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(d.x + 2, d.y + 1, 1.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    _drawImprovisedGear(ctx, state) {
+      // Placed Tripwire Flares (Task 6d)
+      const flares = state.placedTripwireFlares || [];
+      if (flares.length > 0) {
+        ctx.save();
+        for (let i = 0; i < flares.length; i++) {
+          const fl = flares[i];
+          if (!fl.active) continue;
+          ctx.strokeStyle = 'rgba(248, 90, 90, 0.72)';
+          ctx.lineWidth = 1.6;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(fl.x - 28, fl.y);
+          ctx.lineTo(fl.x + 28, fl.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#F85A5A';
+          ctx.strokeStyle = '#111E33';
+          ctx.lineWidth = 1.4;
+          ctx.fillRect(fl.x - 5, fl.y - 3, 10, 6);
+          ctx.strokeRect(fl.x - 5, fl.y - 3, 10, 6);
+        }
+        ctx.restore();
+      }
+
+      // Placed Radio Jammers (Task 6d)
+      const jammers = state.placedJammers || [];
+      if (jammers.length > 0) {
+        ctx.save();
+        for (let i = 0; i < jammers.length; i++) {
+          const jm = jammers[i];
+          const pulse = (this.time * 1.4 + i) % 1;
+          ctx.strokeStyle = `rgba(17, 30, 51, ${((1 - pulse) * 0.45).toFixed(3)})`;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.arc(jm.x, jm.y, 20 + pulse * (jm.radius || 320) * 0.35, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#1C2844';
+          ctx.fillRect(jm.x - 7, jm.y - 5, 14, 10);
+          ctx.fillStyle = '#F85A5A';
+          ctx.beginPath();
+          ctx.arc(jm.x, jm.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // Diesel Smoke Rag Clouds (Task 6d: 6s vision-blocking ink haze)
+      const clouds = state.smokeClouds || [];
+      if (clouds.length > 0) {
+        ctx.save();
+        for (let i = 0; i < clouds.length; i++) {
+          const sc = clouds[i];
+          const fade = Math.min(1, sc.ttl / 1.2);
+          ctx.fillStyle = `rgba(28, 40, 68, ${(0.34 * fade).toFixed(3)})`;
+          ctx.strokeStyle = `rgba(17, 30, 51, ${(0.55 * fade).toFixed(3)})`;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.arc(sc.x, sc.y, sc.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          // Swirling inner ink puffs
+          for (let k = 0; k < 4; k++) {
+            const a = this.time * 0.9 + k * 1.57;
+            ctx.beginPath();
+            ctx.arc(sc.x + Math.cos(a) * sc.radius * 0.35, sc.y + Math.sin(a) * sc.radius * 0.28, sc.radius * 0.42, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
         ctx.restore();
       }
@@ -983,6 +1088,42 @@
         ctx.stroke();
         ctx.restore();
       }
+    }
+
+    _drawHoldActionRing(ctx, state) {
+      const ha = state.holdAction;
+      if (!ha || !Number.isFinite(ha.x) || !Number.isFinite(ha.y)) return;
+      const pct = Math.max(0, Math.min(1, ha.duration > 0 ? ha.elapsed / ha.duration : 0));
+      ctx.save();
+      ctx.translate(ha.x, ha.y - 44);
+      ctx.fillStyle = 'rgba(247, 243, 232, 0.92)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.28)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, 15, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = ha.type === 'takedown' ? PALETTE.crimson : PALETTE.inkDeep;
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(0, 0, 15, -Math.PI * 0.5, -Math.PI * 0.5 + pct * Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = PALETTE.inkDeep;
+      ctx.font = 'bold 11px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('E', 0, 4);
+      if (ha.label) {
+        ctx.font = 'bold 11px "Courier New", monospace';
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = PALETTE.paperBase;
+        ctx.strokeText(ha.label, 0, -24);
+        ctx.fillStyle = PALETTE.inkDeep;
+        ctx.fillText(ha.label, 0, -24);
+      }
+      ctx.restore();
     }
 
     _drawFloatingTexts(ctx, state) {

@@ -161,7 +161,8 @@
     isBehindMe(px, py) {
       const toPlayerAngle = Math.atan2(py - this.centerY, px - this.centerX);
       const diff = Math.abs(normalizeAngle(toPlayerAngle - this.facingAngle));
-      return diff > Math.PI * 0.55;
+      // Task 9: 120-degree rear takedown cone (half-cone = 60 deg -> > 120 deg from facing)
+      return diff > Math.PI * 0.667;
     }
 
     hearSound(sx, sy, priority) {
@@ -219,10 +220,12 @@
       return dmg;
     }
 
-    _canSeeTarget(tx, ty, isConcealed, obstacles) {
+    _canSeeTarget(tx, ty, isConcealed, obstacles, targetMoving) {
+      if ((this.blindTimer || 0) > 0) return false;
       if (isConcealed) {
         const dist = Math.hypot(tx - this.centerX, ty - this.centerY);
-        return dist < 24;
+        // Task 9: 24 px while still, 48 px while moving in ferns
+        return dist < (targetMoving ? 48 : 24);
       }
       const dx = tx - this.centerX;
       const dy = ty - this.centerY;
@@ -231,6 +234,18 @@
       const angle = Math.atan2(dy, dx);
       const halfFov = (this.fovDeg * Math.PI / 180) * 0.5;
       if (Math.abs(normalizeAngle(angle - this.facingAngle)) > halfFov) return false;
+      // Task 6d: Diesel smoke rag clouds block guard vision cones
+      const smokeClouds = global.BelumGame && global.BelumGame.activeSmokeClouds;
+      if (Array.isArray(smokeClouds) && smokeClouds.length > 0) {
+        const lenSq = dx * dx + dy * dy || 1;
+        for (let i = 0; i < smokeClouds.length; i++) {
+          const sc = smokeClouds[i];
+          const t = Math.max(0, Math.min(1, ((sc.x - this.centerX) * dx + (sc.y - this.centerY) * dy) / lenSq));
+          const px = this.centerX + dx * t;
+          const py = this.centerY + dy * t;
+          if (Math.hypot(px - sc.x, py - sc.y) <= sc.radius) return false;
+        }
+      }
       return hasLineOfSight(this.centerX, this.centerY, tx, ty, obstacles);
     }
 
@@ -241,8 +256,12 @@
       if (this.alertMarkTimer > 0) this.alertMarkTimer = Math.max(0, this.alertMarkTimer - safeDt);
       if (this.firingAnimTimer > 0) this.firingAnimTimer = Math.max(0, this.firingAnimTimer - safeDt);
       if (this.fireCooldown > 0) this.fireCooldown = Math.max(0, this.fireCooldown - safeDt);
+      if ((this.blindTimer || 0) > 0) this.blindTimer = Math.max(0, this.blindTimer - safeDt);
 
       const obstacles = level ? level.obstacles : [];
+      const diffPreset = (global.BelumGame && global.BelumGame.difficultyPreset) || null;
+      const suspMult = diffPreset && Number.isFinite(diffPreset.suspicionTimeMult) ? diffPreset.suspicionTimeMult : 1.0;
+      const bulletDmgMult = diffPreset && Number.isFinite(diffPreset.guardBulletDmgMult) ? diffPreset.guardBulletDmgMult : 1.0;
       let activeTarget = null;
       let targetDist = Infinity;
 
@@ -253,7 +272,7 @@
           if (b.dead) continue;
           const dist = Math.hypot(b.centerX - this.centerX, b.centerY - this.centerY);
           const boarAggro = b.state === 'TELEGRAPH' || b.state === 'CHARGE' || b.state === 'AGITATED';
-          const visible = dist < 310 && (boarAggro || this._canSeeTarget(b.centerX, b.centerY, false, obstacles));
+          const visible = dist < 310 && (boarAggro || this._canSeeTarget(b.centerX, b.centerY, false, obstacles, false));
           if (visible && dist < targetDist) {
             activeTarget = { x: b.centerX, y: b.centerY, ref: b, faction: 'FAUNA' };
             targetDist = dist;
@@ -261,10 +280,10 @@
         }
       }
 
-      // 2. Gradual Player Detection (0.85s Inking Eye Suspicion Meter)
+      // 2. Gradual Player Detection (0.85s Inking Eye Suspicion Meter, scaled by difficulty)
       let seesPlayer = false;
       if (player && !player.dead) {
-        seesPlayer = this._canSeeTarget(player.centerX, player.centerY, player.isConcealed, obstacles);
+        seesPlayer = this._canSeeTarget(player.centerX, player.centerY, player.isConcealed, obstacles, !!player.moving);
         const distP = Math.hypot(player.centerX - this.centerX, player.centerY - this.centerY);
 
         if (seesPlayer) {
@@ -274,9 +293,9 @@
               targetDist = distP;
             }
           } else {
-            // Fill suspicion gradually over 0.85s (faster if very close)
-            const fillDuration = distP < 90 ? 0.38 : this.suspicionFillTime;
-            this.suspicionMeter = Math.min(1.0, this.suspicionMeter + safeDt / fillDuration);
+            // Fill suspicion gradually over 0.85s (faster if very close), scaled by difficulty
+            const fillDuration = (distP < 90 ? 0.38 : this.suspicionFillTime) * suspMult;
+            this.suspicionMeter = Math.min(1.0, this.suspicionMeter + safeDt / Math.max(0.1, fillDuration));
             this.suspicionTarget = { x: player.centerX, y: player.centerY };
             this.suspicionTimer = 4.8;
             this.sweepBaseAngle = Math.atan2(player.centerY - this.centerY, player.centerX - this.centerX);
@@ -296,7 +315,8 @@
           if (this.state !== 'ALERT' && this.suspicionMeter > 0) {
             this.suspicionMeter = Math.max(0, this.suspicionMeter - safeDt * 0.24);
           }
-          if (player.sprinting && distP < 130 && this.state === 'PATROL') {
+          const footstepMult = (player.getProficiencyRank && player.getProficiencyRank('fieldcraft') >= 1) ? 0.85 : 1.0;
+          if (player.sprinting && distP < 130 * footstepMult && this.state === 'PATROL') {
             this.hearSound(player.centerX, player.centerY, false);
           }
         }
@@ -314,7 +334,7 @@
           isMoving = this._moveToward(activeTarget.x, activeTarget.y, this.alertSpeed, safeDt, level);
         }
 
-        // Enemy Part A1: Hold aim pose (frame 2 / idx 1) while turning to aim or waiting on fireCooldown
+        // Enemy Part A1: Hold aim pose while turning to aim or waiting on fireCooldown
         const aimErr = Math.abs(normalizeAngle(desiredAngle - this.facingAngle));
         if (aimErr >= 0.35 || (this.burstRemaining === 0 && this.firingAnimTimer <= 0)) {
           this.holdingAimPose = true;
@@ -329,7 +349,8 @@
               this.burstIntervalTimer = 0.13;
               if (ctxEvents && ctxEvents.onMercFire) {
                 const spread = (Math.random() - 0.5) * 0.08;
-                ctxEvents.onMercFire(this, this.facingAngle + spread, this.bulletDamage);
+                const scaledDmg = Math.max(1, Math.round(this.bulletDamage * bulletDmgMult));
+                ctxEvents.onMercFire(this, this.facingAngle + spread, scaledDmg);
               }
             }
           } else if (this.fireCooldown <= 0) {

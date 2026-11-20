@@ -164,7 +164,17 @@
       }
 
       // Crisp Prussian Blue dip-pen etched procedural structures & fallbacks
-      if (this.type === 'barracks' || this.type === 'generator_shed') {
+      if (this.type === 'sector_gate') {
+        this._drawSectorGate(ctx);
+      } else if (this.type === 'fishing_hut') {
+        this._drawFishingHut(ctx);
+      } else if (this.type === 'radio_truck') {
+        this._drawRadioTruck(ctx);
+      } else if (this.type === 'guard_tower') {
+        this._drawGuardTower(ctx);
+      } else if (this.type === 'basha_site') {
+        this._drawBashaSite(ctx, time);
+      } else if (this.type === 'barracks' || this.type === 'generator_shed') {
         this._drawBarracks(ctx);
       } else if (this.type === 'bunker_wall') {
         this._drawBunkerWall(ctx);
@@ -178,7 +188,183 @@
         this._drawInkTree(ctx);
       }
 
+      if (this.label && ['sector_gate', 'fishing_hut', 'radio_truck', 'guard_tower', 'basha_site'].includes(this.type)) {
+        this._drawStructureStamp(ctx, this.x + this.width * 0.5, this.y + this.height + 10, this.label);
+      }
+
       ctx.restore();
+    }
+
+    _drawSectorGate(ctx) {
+      if (this.unlocked) {
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.35)';
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(this.x, this.y, this.width, this.height);
+        ctx.setLineDash([]);
+        return;
+      }
+      ctx.fillStyle = 'rgba(214, 198, 166, 0.72)';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.4;
+      ctx.fillRect(this.x, this.y, this.width, this.height);
+      ctx.strokeRect(this.x, this.y, this.width, this.height);
+      // Chain-link cross-hatching
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.55)';
+      ctx.lineWidth = 1.2;
+      for (let y = this.y + 12; y < this.y + this.height; y += 16) {
+        ctx.beginPath();
+        ctx.moveTo(this.x + 2, y);
+        ctx.lineTo(this.x + this.width - 2, y - 10);
+        ctx.moveTo(this.x + 2, y - 10);
+        ctx.lineTo(this.x + this.width - 2, y);
+        ctx.stroke();
+      }
+      // Padlock crimson dot
+      ctx.fillStyle = '#F85A5A';
+      ctx.beginPath();
+      ctx.arc(this.x + this.width * 0.5, this.y + this.height * 0.5, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // TODO: replace with assets/environment/fishing_boat_locker.png (Task 5)
+    _drawFishingHut(ctx) {
+      ctx.fillStyle = '#E6DAC0';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.fillRect(this.x, this.y + 18, this.width, this.height - 18);
+      ctx.strokeRect(this.x, this.y + 18, this.width, this.height - 18);
+      // Corrugated tin lean-to roof
+      ctx.fillStyle = '#D5C5A3';
+      ctx.beginPath();
+      ctx.moveTo(this.x - 8, this.y + 22);
+      ctx.lineTo(this.x + this.width * 0.5, this.y);
+      ctx.lineTo(this.x + this.width + 8, this.y + 22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      for (let x = this.x + 14; x < this.x + this.width; x += 16) {
+        ctx.beginPath();
+        ctx.moveTo(x, this.y + 22);
+        ctx.lineTo(x, this.y + this.height);
+        ctx.stroke();
+      }
+    }
+
+    // TODO: replace with modern military radio truck ink prop when art pass expands
+    _drawRadioTruck(ctx) {
+      ctx.fillStyle = '#E6DAC0';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y + 10, this.width * 0.72, this.height - 16, 4);
+      ctx.fill();
+      ctx.stroke();
+      // Cab
+      ctx.fillStyle = '#D5C5A3';
+      ctx.beginPath();
+      ctx.roundRect(this.x + this.width * 0.7, this.y + 18, this.width * 0.28, this.height - 24, 4);
+      ctx.fill();
+      ctx.stroke();
+      // Whip antenna + dish
+      ctx.beginPath();
+      ctx.moveTo(this.x + 24, this.y + 10);
+      ctx.lineTo(this.x + 18, this.y - 26);
+      ctx.stroke();
+      ctx.fillStyle = '#F85A5A';
+      ctx.beginPath();
+      ctx.arc(this.x + 18, this.y - 26, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // TODO: replace with modern steel perimeter watchtower ink prop
+    _drawGuardTower(ctx) {
+      ctx.fillStyle = '#E6DAC0';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.strokeRect(this.x + 8, this.y + 24, this.width - 16, this.height - 24);
+      // Cross braces
+      ctx.beginPath();
+      ctx.moveTo(this.x + 8, this.y + 24);
+      ctx.lineTo(this.x + this.width - 8, this.y + this.height);
+      ctx.moveTo(this.x + this.width - 8, this.y + 24);
+      ctx.lineTo(this.x + 8, this.y + this.height);
+      ctx.stroke();
+      // Sandbagged top deck
+      ctx.fillRect(this.x, this.y, this.width, 28);
+      ctx.strokeRect(this.x, this.y, this.width, 28);
+    }
+
+    // TODO: replace with assets/environment/basha_site.png
+    _drawBashaSite(ctx, time) {
+      const x = this.x;
+      const y = this.y;
+      const w = this.width;
+      const h = this.height;
+      // Ground shadow under tarp
+      ctx.fillStyle = 'rgba(17, 30, 51, 0.16)';
+      ctx.beginPath();
+      ctx.ellipse(x + w * 0.5, y + h * 0.84, w * 0.48, h * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Guy-lines & wooden pegs
+      ctx.strokeStyle = '#1C2844';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x + 14, y + h * 0.56);
+      ctx.lineTo(x + 2, y + h * 0.86);
+      ctx.moveTo(x + w - 14, y + h * 0.56);
+      ctx.lineTo(x + w - 2, y + h * 0.86);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Hammock slung underneath tarp
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x + 18, y + h * 0.55);
+      ctx.quadraticCurveTo(x + w * 0.5, y + h * 0.78, x + w - 18, y + h * 0.55);
+      ctx.stroke();
+
+      // Sloped modern jungle basha tarp roof
+      ctx.fillStyle = '#E6DAC0';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(x + 10, y + h * 0.54);
+      ctx.lineTo(x + w * 0.44, y + 10);
+      ctx.lineTo(x + w - 8, y + 22);
+      ctx.lineTo(x + w - 14, y + h * 0.62);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      // Cross-hatching along tarp ridge
+      ctx.strokeStyle = 'rgba(17, 30, 51, 0.35)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 5; i++) {
+        const px = x + 16 + (w - 36) * (i / 6);
+        ctx.beginPath();
+        ctx.moveTo(px, y + 22);
+        ctx.lineTo(px - 6, y + h * 0.54);
+        ctx.stroke();
+      }
+
+      // Tactical radio on log with crimson power LED
+      ctx.fillStyle = '#1C2844';
+      ctx.fillRect(x + w * 0.66, y + h * 0.68, 18, 12);
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(x + w * 0.66 + 14, y + h * 0.68);
+      ctx.lineTo(x + w * 0.66 + 17, y + h * 0.44);
+      ctx.stroke();
+      const blink = Math.sin((time || 0) * 4) > -0.2;
+      ctx.fillStyle = blink ? '#F85A5A' : 'rgba(248, 90, 90, 0.35)';
+      ctx.beginPath();
+      ctx.arc(x + w * 0.66 + 5, y + h * 0.68 + 4, 2.2, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     _drawStructureStamp(ctx, cx, cy, text) {

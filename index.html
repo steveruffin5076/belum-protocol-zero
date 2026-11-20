@@ -15,6 +15,9 @@
     <!-- Aged Parchment Organic Vignette Frame -->
     <div id="parchment-vignette" aria-hidden="true"></div>
 
+    <!-- Task 6b: Spore Exposure Full-Meter Blurred Vision Overlay -->
+    <div id="spore-blur-overlay" class="spore-blur-overlay hidden" aria-hidden="true"></div>
+
     <!-- IN-GAME HUD OVERLAY (Reference Layout Match) -->
     <div id="hud-root" class="hud-hidden">
       <!-- TOP-LEFT STATUS STACK -->
@@ -33,8 +36,8 @@
           </div>
         </div>
 
-        <!-- Segmented Stamina / Hydration Bar + Serpent Emblem -->
-        <div class="stat-row" id="stamina-bar-row" title="Stamina & Hydration">
+        <!-- Segmented Stamina Bar + Serpent Emblem -->
+        <div class="stat-row" id="stamina-bar-row" title="Stamina">
           <div class="stat-emblem emblem-stamina" aria-hidden="true">
             <svg viewBox="0 0 28 28" width="24" height="24">
               <path d="M7 21 C7 16 12 16 14 13 C16 10 21 11 21 7 C21 5.2 19.3 4.2 17.5 4.8 C15.2 5.5 14 7.5 12 9 C9.5 10.8 6.5 12 6.5 16.5" fill="none" stroke="#3E7C59" stroke-width="3.2" stroke-linecap="round"/>
@@ -46,6 +49,27 @@
           <div class="stat-bar-wrap">
             <div id="stamina-segments" class="segmented-bar stamina-segments"></div>
             <span id="stamina-text" class="stat-label">STAMINA</span>
+          </div>
+        </div>
+
+        <!-- Task 6a: Hydration & Energy Compact Ink Gauges -->
+        <!-- TODO: replace icons with assets/ui/status_icons_sheet.png icons 1-2 (water droplet & ration pouch) -->
+        <div class="needs-row" id="needs-row">
+          <div class="need-gauge" id="hydration-gauge" title="Hydration (Purified Water +60%)">
+            <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+              <path d="M10 2.5 C10 2.5 4.5 9.2 4.5 13 C4.5 16 7 18 10 18 C13 18 15.5 16 15.5 13 C15.5 9.2 10 2.5 10 2.5 Z" fill="#F4ECD8" stroke="#111E33" stroke-width="1.8" stroke-linejoin="round"/>
+            </svg>
+            <div class="need-bar-track"><div id="hydration-fill" class="need-bar-fill"></div></div>
+            <span id="hydration-text" class="need-val">100%</span>
+          </div>
+          <div class="need-gauge" id="energy-gauge" title="Energy (Field Ration +50%, Energy Gel +25%, Bamboo +15%)">
+            <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+              <rect x="4" y="3.5" width="12" height="13.5" rx="2" fill="#F4ECD8" stroke="#111E33" stroke-width="1.7"/>
+              <line x1="6.5" y1="7.5" x2="13.5" y2="7.5" stroke="#111E33" stroke-width="1.4"/>
+              <line x1="6.5" y1="11.5" x2="11.5" y2="11.5" stroke="#111E33" stroke-width="1.4"/>
+            </svg>
+            <div class="need-bar-track"><div id="energy-fill" class="need-bar-fill"></div></div>
+            <span id="energy-text" class="need-val">100%</span>
           </div>
         </div>
 
@@ -64,6 +88,10 @@
 
         <!-- Active Stealth / Status Pill -->
         <div id="stealth-status-pill" class="stealth-pill">EXPOSED</div>
+
+        <!-- Task 6b: Active Injury & Respirator Status Badges -->
+        <!-- TODO: replace icons with assets/ui/status_icons_sheet.png icons 3-7 -->
+        <div id="status-effects-row" class="status-effects-row"></div>
       </div>
 
       <!-- TOP-CENTER SECTOR BANNER, AUDIO STATUS & ALERT / BLAST TIMER -->
@@ -111,10 +139,10 @@
           </button>
         </div>
 
-        <!-- Collapsible Dark-Ink Quest Tracker Parchment Scroll -->
+        <!-- Collapsible Dark-Ink Mission Objectives Scroll -->
         <div id="quest-scroll" class="quest-scroll">
           <button id="quest-scroll-toggle" class="quest-scroll-header" aria-expanded="true">
-            <span class="scroll-title">OP: SILENT RAIN</span>
+            <span class="scroll-title">OBJECTIVES // SILENT RAIN</span>
             <span id="quest-scroll-chevron">▾</span>
           </button>
           <div id="quest-scroll-body" class="quest-scroll-body">
@@ -123,7 +151,7 @@
         </div>
       </div>
 
-      <!-- BOTTOM-LEFT MOVEMENT D-PAD & "GO HOME" BIVOUAC CABIN -->
+      <!-- BOTTOM-LEFT MOVEMENT D-PAD & FIELD CACHE BUTTON -->
       <div id="hud-bottom-left" class="hud-cluster">
         <div id="dpad-dial" class="dpad-dial" role="group" aria-label="Tactical Movement D-Pad">
           <div class="dpad-ring"></div>
@@ -141,15 +169,16 @@
           </div>
         </div>
 
-        <button id="btn-go-home" class="go-home-btn" title="Go Home Bivouac Camp (B)">
+        <!-- TODO: replace icon with assets/ui/status_icons_sheet.png icon 8 (tarp shelter) -->
+        <button id="btn-go-home" class="go-home-btn" title="Field Cache / Basha Site">
           <svg viewBox="0 0 42 36" width="38" height="32" aria-hidden="true">
-            <path d="M4 18 L21 5 L38 18" fill="none" stroke="#111E33" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M9 15 V31 H33 V15" fill="#F4ECD8" stroke="#111E33" stroke-width="2"/>
-            <rect x="17" y="21" width="8" height="10" fill="#1C2844" opacity="0.85"/>
-            <path d="M27 7 V12" stroke="#111E33" stroke-width="2.2"/>
-            <path d="M27 4 C28.5 2 31 2.5 30.5 5" fill="none" stroke="#1C2844" stroke-width="1.3" opacity="0.7"/>
+            <path d="M5 27 L19 10 L37 16 L34 29" fill="#F4ECD8" stroke="#111E33" stroke-width="2.1" stroke-linejoin="round"/>
+            <path d="M19 10 L21 29" stroke="#111E33" stroke-width="1.8"/>
+            <path d="M3 29 H39" stroke="#111E33" stroke-width="2" stroke-linecap="round"/>
+            <path d="M10 27 L5 31 M34 27 L39 31" stroke="#1C2844" stroke-width="1.5" stroke-dasharray="2 2"/>
+            <circle cx="28" cy="24" r="2" fill="#F85A5A"/>
           </svg>
-          <span>Go Home</span>
+          <span>Field Cache</span>
         </button>
       </div>
 
@@ -163,7 +192,7 @@
             <span class="slot-name">PARANG</span>
             <span class="slot-ammo" id="ammo-parang">∞</span>
           </button>
-          <button class="weapon-slot" data-weapon="crossbow" title="2: Crossbow">
+          <button class="weapon-slot" data-weapon="crossbow" title="2: Compound Crossbow">
             <span class="slot-key">2</span>
             <img class="slot-icon" src="assets/ui/items/crossbow.png" alt="Crossbow" />
             <span class="slot-name">BOW</span>
@@ -175,10 +204,10 @@
             <span class="slot-name">9MM</span>
             <span class="slot-ammo" id="ammo-pistol">0</span>
           </button>
-          <button class="weapon-slot" data-weapon="decoy" title="4: Decoy Rock">
+          <button class="weapon-slot" data-weapon="decoy" title="4: Noisemaker">
             <span class="slot-key">4</span>
-            <img class="slot-icon" src="assets/ui/items/decoy_rocks.png" alt="Decoy Rocks" />
-            <span class="slot-name">ROCK</span>
+            <img class="slot-icon" src="assets/ui/items/decoy_rocks.png" alt="Noisemaker" />
+            <span class="slot-name">NOISE</span>
             <span class="slot-ammo" id="ammo-decoy">3</span>
           </button>
         </div>
@@ -187,7 +216,7 @@
       <!-- BOTTOM-RIGHT ACTION CLUSTER -->
       <div id="hud-bottom-right" class="hud-cluster">
         <div class="action-cluster">
-          <!-- Hand Icon: Interact / Stealth Takedown / Scavenge -->
+          <!-- Hand Icon: Interact / Stealth Takedown / Salvage -->
           <button id="btn-action-hand" class="action-btn action-hand" title="Interact / Stealth Takedown (E)" aria-label="Interact">
             <svg viewBox="0 0 32 32" width="26" height="26">
               <path d="M11 16 V9 C11 8 12.5 8 12.5 9 V15 M12.5 14 V7.5 C12.5 6.5 14.5 6.5 14.5 7.5 V14.5 M14.5 14 V8 C14.5 7 16.5 7 16.5 8 V15 M16.5 15 V10 C16.5 9 18.5 9 18.5 10 V18 C18.5 22 16.5 25 13 25 C10 25 8.5 23 8.5 19.5 V15 C8.5 13.8 10 13.8 10 15" fill="#F7F3E8" stroke="#111E33" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -196,8 +225,8 @@
             <span class="action-caption">USE</span>
           </button>
 
-          <!-- Crosshair Button (Top): Aim & Fire Ranged / Decoy -->
-          <button id="btn-action-crosshair" class="action-btn action-crosshair" title="Aim & Fire Ranged / Throw Rock (Right Click / F)" aria-label="Aim and Fire">
+          <!-- Crosshair Button (Top): Aim & Fire Ranged / Noisemaker -->
+          <button id="btn-action-crosshair" class="action-btn action-crosshair" title="Aim & Fire Ranged / Throw Noisemaker (Right Click / F)" aria-label="Aim and Fire">
             <svg viewBox="0 0 32 32" width="26" height="26">
               <circle cx="16" cy="16" r="9" fill="none" stroke="#111E33" stroke-width="1.8"/>
               <circle cx="16" cy="16" r="2.2" fill="#F85A5A"/>
@@ -248,7 +277,7 @@
         <pre id="prologue-typewriter" class="dossier-body"></pre>
         <div class="dossier-footer">
           <div class="controls-hint">
-            WASD Move &bull; C Crouch/Conceal &bull; Shift Sprint &bull; Click Attack/Aim &bull; E Takedown/Use &bull; 1-4 Weapons &bull; B Bivouac Camp
+            WASD Move &bull; C Crouch/Conceal &bull; Shift Sprint &bull; Click Attack/Aim &bull; E Takedown/Use &bull; 1-4 Weapons &bull; Field Cache
           </div>
           <div class="dossier-actions">
             <button id="btn-prologue-skip" class="ink-btn secondary">SKIP BRIEFING</button>
@@ -258,51 +287,55 @@
       </div>
     </div>
 
-    <!-- "GO HOME" BIVOUAC CAMP OVERLAY -->
+    <!-- FIELD CACHE / BASHA SITE OVERLAY -->
     <div id="camp-modal" class="modal-overlay hidden">
       <div class="parchment-panel camp-panel">
         <div class="panel-header">
           <div>
-            <h2>BIVOUAC SHELTER // BELUM CANOPY</h2>
-            <p class="panel-subtitle">Safe Field Camp &mdash; Craft, Purify, Cook &amp; Decrypt VBS Telemetry</p>
+            <h2 id="camp-site-title">FIELD CACHE // BASHA SITE</h2>
+            <p class="panel-subtitle">Hidden Jungle Tarp Shelter &mdash; Rest (Checkpoint), Purify, Hexamine Stove, Workbench &amp; Radio</p>
           </div>
-          <button id="btn-camp-close" class="ink-btn secondary">RETURN TO FIELD [B]</button>
+          <button id="btn-camp-close" class="ink-btn secondary">RETURN TO FIELD</button>
         </div>
-        <div id="camp-status-msg" class="camp-status-msg">Rain taps steadily on the tarpaulin. Select a station below.</div>
+        <div id="camp-status-msg" class="camp-status-msg">Rain taps steadily on the basha tarp. Select a station below.</div>
+        <div class="camp-rest-bar">
+          <button id="btn-camp-rest" class="ink-btn primary">REST &amp; SAVE CHECKPOINT (+2 HP once, Full Stamina, Clear Tourniquet)</button>
+          <button id="btn-camp-leeches" class="ink-btn secondary hidden">REMOVE LEECHES (3s)</button>
+        </div>
         <div class="camp-grid">
-          <!-- Station 1: Rainwater Filtration -->
+          <!-- Station 1: Water Purification -->
           <div class="camp-card" id="station-water">
-            <h3>1. Rainwater Filtration Station</h3>
-            <p>Purify murky rainforest runoff into <strong>Pure Drinking Water</strong> (+50% stamina regen).</p>
+            <h3>1. Water Purification</h3>
+            <p>Combine <strong>1 Dirty Water + 1 Purification Tablet</strong> into <strong>Purified Water</strong> (+60% hydration).</p>
             <div class="camp-inv-line" id="camp-water-counts"></div>
-            <button id="btn-craft-water" class="ink-btn primary">FILTER WATER (1 Dirty Rainwater)</button>
+            <button id="btn-craft-water" class="ink-btn primary">PURIFY WATER (1 Dirty + 1 Tab)</button>
           </div>
 
-          <!-- Station 2: Ration Cookstove -->
+          <!-- Station 2: Hexamine Stove -->
           <div class="camp-card" id="station-cook">
-            <h3>2. Ration Cookstove</h3>
-            <p>Simmer Wild Bamboo Shoots + Harvested Boar Meat into <strong>Jungle Stew Ration</strong> (+6 HP).</p>
+            <h3>2. Hexamine Field Stove</h3>
+            <p>Grill boar meat into <strong>Grilled Boar Strips</strong> (packable field ration: +2 HP, +50% energy).</p>
             <div class="camp-inv-line" id="camp-cook-counts"></div>
-            <button id="btn-craft-stew" class="ink-btn primary">COOK STEW (1 Bamboo + 1 Meat)</button>
+            <button id="btn-craft-stew" class="ink-btn primary">GRILL BOAR STRIPS (1 Boar Meat)</button>
           </div>
 
           <!-- Station 3: Field Workbench -->
           <div class="camp-card" id="station-bench">
             <h3>3. Field Workbench</h3>
-            <p>Fletch silent <strong>Crossbow Bolts</strong> or press <strong>9mm Subsonic Rounds</strong>.</p>
+            <p>Atomic field improvisation. Recipes appear once you salvage at least one ingredient.</p>
             <div class="camp-inv-line" id="camp-bench-counts"></div>
-            <div class="camp-btn-stack">
-              <button id="btn-craft-bolts" class="ink-btn primary">FLETCH +3 BOLTS (1 Bamboo + 1 Wire)</button>
-              <button id="btn-craft-ammo" class="ink-btn secondary">PRESS +4 9MM ROUNDS (1 Wire)</button>
-            </div>
+            <div class="camp-btn-stack" id="camp-recipes-list"></div>
           </div>
 
-          <!-- Station 4: Decryption Terminal -->
+          <!-- Station 4: Tactical Radio & Decryption -->
           <div class="camp-card" id="station-decrypt">
-            <h3>4. Decryption Terminal</h3>
-            <p>Crack encrypted <strong>VBS Telemetry Drives</strong> to uncover passcodes &amp; BT-09 lore.</p>
+            <h3>4. Tactical Radio &amp; Decryption</h3>
+            <p>Decrypt recovered <strong>VBS Telemetry Drives</strong> or check in with GGK Command for objective guidance.</p>
             <div class="camp-inv-line" id="camp-decrypt-counts"></div>
-            <button id="btn-decrypt-drive" class="ink-btn primary">DECRYPT RECOVERED DRIVE</button>
+            <div class="camp-btn-stack">
+              <button id="btn-decrypt-drive" class="ink-btn primary">DECRYPT RECOVERED DRIVE</button>
+              <button id="btn-radio-hint" class="ink-btn secondary">RADIO CHECK-IN: HANDLER HINT</button>
+            </div>
             <div id="camp-lore-output" class="camp-lore-box">No decrypted telemetry loaded.</div>
           </div>
         </div>
@@ -347,7 +380,10 @@
   <script src="src/entities/player.js"></script>
   <script src="src/entities/mercenary.js"></script>
   <script src="src/entities/boar.js"></script>
+  <script src="src/entities/drone.js"></script>
   <script src="src/world/obstacles.js"></script>
+  <script src="src/world/act1_flow.js"></script>
+  <script src="src/world/recipes.js"></script>
   <script src="src/world/level_act1.js"></script>
   <script src="src/engine/renderer.js"></script>
   <script src="src/ui/hud.js"></script>

@@ -60,6 +60,12 @@
         meleeSlash: false,
         interact: false,
         quickConsumable: false,
+        bandage: false,
+        tourniquet: false,
+        toggleFilterMask: false,
+        throwSmoke: false,
+        placeJammer: false,
+        placeTripwireFlare: false,
         toggleCamp: false,
         dodge: false,
         weaponSelect: null
@@ -88,6 +94,10 @@
       }
     }
 
+    isInteractHeld() {
+      return !!(this.keys['KeyE'] || this.keys['KeyF'] || this.touchInteractHeld);
+    }
+
     _bindKeyboard() {
       window.addEventListener('keydown', (e) => {
         this._notifyUserGesture();
@@ -112,6 +122,18 @@
               this.actions.interact = true;
             } else if (code === 'KeyQ') {
               this.actions.quickConsumable = true;
+            } else if (code === 'KeyH') {
+              this.actions.bandage = true;
+            } else if (code === 'KeyY') {
+              this.actions.tourniquet = true;
+            } else if (code === 'KeyR') {
+              this.actions.toggleFilterMask = true;
+            } else if (code === 'KeyG') {
+              this.actions.throwSmoke = true;
+            } else if (code === 'KeyT') {
+              this.actions.placeJammer = true;
+            } else if (code === 'KeyV') {
+              this.actions.placeTripwireFlare = true;
             } else if (code === 'KeyB') {
               this.actions.toggleCamp = true;
             } else if (code === 'Space') {
@@ -139,6 +161,7 @@
 
       window.addEventListener('blur', () => {
         this.keys = Object.create(null);
+        this.touchInteractHeld = false;
         this.dpadVector = { x: 0, y: 0 };
         this.dpadPointerId = null;
         this._resetKnobVisual();
@@ -256,6 +279,16 @@
       bindMultiTouchTap('btn-action-hand', () => {
         this.actions.interact = true;
       }, true);
+      const handBtn = document.getElementById('btn-action-hand');
+      if (handBtn) {
+        handBtn.addEventListener('pointerdown', () => {
+          if (this._isGameplayActive()) this.touchInteractHeld = true;
+        });
+        const releaseHand = () => { this.touchInteractHeld = false; };
+        handBtn.addEventListener('pointerup', releaseHand);
+        handBtn.addEventListener('pointercancel', releaseHand);
+        handBtn.addEventListener('pointerleave', releaseHand);
+      }
       bindMultiTouchTap('btn-action-crosshair', () => {
         this.actions.attackRanged = true;
       }, true);
@@ -317,6 +350,12 @@
       this.actions.meleeSlash = false;
       this.actions.interact = false;
       this.actions.quickConsumable = false;
+      this.actions.bandage = false;
+      this.actions.tourniquet = false;
+      this.actions.toggleFilterMask = false;
+      this.actions.throwSmoke = false;
+      this.actions.placeJammer = false;
+      this.actions.placeTripwireFlare = false;
       this.actions.toggleCamp = false;
       this.actions.dodge = false;
       this.actions.weaponSelect = null;

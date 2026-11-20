@@ -14,18 +14,44 @@
     4: { x: 3255, y: 640 }
   };
 
+  const DIFFICULTY_PRESETS = {
+    recruit:  { id: 'recruit',  label: 'Recruit',  maxHp: 14, guardBulletDmgMult: 0.7,  suspicionTimeMult: 1.4,  needsDrainMult: 0.6, medContainersDelta: 1 },
+    operator: { id: 'operator', label: 'Operator', maxHp: 11, guardBulletDmgMult: 1.0,  suspicionTimeMult: 1.0,  needsDrainMult: 1.0, medContainersDelta: 0 },
+    black_op: { id: 'black_op', label: 'Black Op', maxHp: 9,  guardBulletDmgMult: 1.25, suspicionTimeMult: 0.75, needsDrainMult: 1.3, medContainersDelta: -1 }
+  };
+
   const VALID_WEAPONS = ['parang', 'crossbow', 'pistol', 'decoy'];
   const INVENTORY_SCHEMA = {
     hasParangPickup: 'boolean',
+    hasBoltCutters: 'boolean',
+    hasSafeCode: 'boolean',
     hasKeycard: 'boolean',
     encryptedDrives: 'number',
     decryptedLore: 'array',
     dirtyWater: 'number',
     pureWater: 'number',
+    purificationTabs: 'number',
     bambooShoots: 'number',
     boarMeat: 'number',
     jungleStew: 'number',
-    scrapWire: 'number'
+    energyGel: 'number',
+    medkit: 'number',
+    bandage: 'number',
+    tourniquet: 'number',
+    filterMask: 'boolean',
+    filterCartridge: 'number',
+    sporeInjector: 'number',
+    scrapWire: 'number',
+    emptyCan: 'number',
+    pebbles: 'number',
+    flare: 'number',
+    rag: 'number',
+    diesel: 'number',
+    radioParts: 'number',
+    battery: 'number',
+    tripwireFlares: 'number',
+    smokeRags: 'number',
+    radioJammers: 'number'
   };
 
   function isPlainObject(v) {
@@ -152,6 +178,24 @@
     }
     migrated.flags = migrated.flags || {};
 
+    if (migrated.proficiency !== undefined) {
+      if (!isPlainObject(migrated.proficiency)) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+      const cleanProf = { closeQuarters: 0, fieldcraft: 0, marksmanship: 0, fieldMedic: 0 };
+      const pKeys = Object.keys(migrated.proficiency);
+      for (let i = 0; i < pKeys.length; i++) {
+        const k = pKeys[i];
+        if (!Object.prototype.hasOwnProperty.call(cleanProf, k)) continue;
+        const v = migrated.proficiency[k];
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+          return { ok: false, reason: 'damaged', data: null };
+        }
+        cleanProf[k] = Math.floor(v);
+      }
+      migrated.proficiency = cleanProf;
+    }
+
     return { ok: true, reason: null, data: migrated };
   }
 
@@ -188,6 +232,11 @@
                 if (this.input) this.input.clearActions();
               }
             },
+            onRestCheckpoint: () => {
+              if (this.sound) this.sound.playDecoyClatter();
+              this._saveSectorCheckpoint(this.currentSectorId, true);
+              if (this.hud) this.hud.showToast('RESTED AT BASHA SITE — CHECKPOINT SAVED', 2.4);
+            },
             onCraftSuccess: () => {
               if (this.sound) this.sound.playDecoyClatter();
               this._saveSectorCheckpoint(this.currentSectorId, true);
@@ -197,6 +246,9 @@
               if (this.sound) this.sound.playRadioAlert();
               if (this.hud) this.hud.showToast(`DECRYPTED: ${entry.title}`, 3.5);
               this._saveSectorCheckpoint(this.currentSectorId, true);
+            },
+            onRadioHint: () => {
+              if (this.sound) this.sound.playRadioAlert();
             }
           })
         : null;
@@ -206,11 +258,14 @@
 
       this.hud = this.ns.HUDController
         ? new this.ns.HUDController({
-            onOpenCamp: () => this.tryOpenCamp(),
+            onOpenCamp: () => this.tryOpenCampFromHud(),
             onSelectWeapon: (wid) => this._selectWeapon(wid),
             onToggleMute: () => this._toggleMute(),
             onAudioBadgeClick: () => this._handleAudioBadgeClick(),
             onUpdateSettings: (patch) => this._updateSettings(patch),
+            onStartBandage: () => this.startBandage(),
+            onToggleFilterMask: () => this._toggleFilterMask(),
+            onUseSporeInjector: () => this._useSporeInjector(),
             onUtilityOpen: () => this._onUtilityOpen(),
             onUtilityClose: () => this._onUtilityClose(),
             getSnapshot: () => ({
@@ -237,7 +292,7 @@
     }
 
     _loadSettings() {
-      const defaults = { version: 1, shake: 100, reduceFlash: false };
+      const defaults = { version: 1, shake: 100, reduceFlash: false, difficulty: 'operator' };
       if (typeof localStorage === 'undefined') return defaults;
       try {
         const raw = localStorage.getItem(SETTINGS_KEY);
@@ -246,7 +301,8 @@
         if (!parsed || typeof parsed !== 'object') return defaults;
         const shake = Number.isFinite(parsed.shake) ? Math.max(0, Math.min(100, Math.round(parsed.shake))) : 100;
         const reduceFlash = typeof parsed.reduceFlash === 'boolean' ? parsed.reduceFlash : false;
-        return { version: 1, shake, reduceFlash };
+        const difficulty = (typeof parsed.difficulty === 'string' && DIFFICULTY_PRESETS[parsed.difficulty]) ? parsed.difficulty : 'operator';
+        return { version: 1, shake, reduceFlash, difficulty };
       } catch (_) {
         return defaults;
       }
@@ -258,19 +314,84 @@
         localStorage.setItem(SETTINGS_KEY, JSON.stringify({
           version: 1,
           shake: this.settings.shake,
-          reduceFlash: !!this.settings.reduceFlash
+          reduceFlash: !!this.settings.reduceFlash,
+          difficulty: this.settings.difficulty || 'operator'
         }));
       } catch (_) {
         // Ignore storage errors and keep in-memory settings
       }
     }
 
+    _getDifficultyPreset() {
+      const id = (this.settings && this.settings.difficulty) || 'operator';
+      return DIFFICULTY_PRESETS[id] || DIFFICULTY_PRESETS.operator;
+    }
+
     _applySettings() {
       if (this.camera && typeof this.camera.setShakeStrength === 'function') {
         this.camera.setShakeStrength((this.settings.shake || 0) / 100);
       }
+      const preset = this._getDifficultyPreset();
+      this.difficultyPreset = preset;
       global.BelumGame = global.BelumGame || {};
       global.BelumGame.reduceFlash = !!this.settings.reduceFlash;
+      global.BelumGame.difficultyPreset = preset;
+      if (this.player) {
+        const bonusHp = (this.player.getProficiencyRank && this.player.getProficiencyRank('fieldMedic') >= 2) ? 1 : 0;
+        const targetMax = preset.maxHp + bonusHp;
+        const prevMax = this.player.maxHp || targetMax;
+        const ratio = prevMax > 0 ? this.player.hp / prevMax : 1;
+        this.player.maxHp = targetMax;
+        this.player.hp = Math.max(1, Math.min(targetMax, Math.round(ratio * targetMax)));
+      }
+    }
+
+    _recordProficiencyAction(key, delta) {
+      const p = this.player;
+      if (!p || !p.proficiency || !Object.prototype.hasOwnProperty.call(p.proficiency, key)) return;
+      const beforeRank = p.getProficiencyRank(key);
+      p.proficiency[key] += (delta || 1);
+      const afterRank = p.getProficiencyRank(key);
+      if (afterRank > beforeRank) {
+        const msgs = {
+          closeQuarters: {
+            1: 'Close Quarters — Rank 1: faster takedowns (0.45s).',
+            2: 'Close Quarters — Rank 2: silent body drag unlocked.'
+          },
+          fieldcraft: {
+            1: 'Fieldcraft — Rank 1: footsteps quieter.',
+            2: 'Fieldcraft — Rank 2: searches 25% faster.'
+          },
+          marksmanship: {
+            1: 'Marksmanship — Rank 1: sway reduced.',
+            2: 'Marksmanship — Rank 2: auto-recover bolts within 60px.'
+          },
+          fieldMedic: {
+            1: 'Field Medic — Rank 1: bandage time 1.2s.',
+            2: 'Field Medic — Rank 2: +1 max HP.'
+          }
+        };
+        if (key === 'fieldMedic' && afterRank >= 2) {
+          const preset = this._getDifficultyPreset();
+          const newMax = preset.maxHp + 1;
+          if (p.maxHp < newMax) {
+            p.maxHp = newMax;
+            p.hp = Math.min(p.maxHp, p.hp + 1);
+          }
+        }
+        const toastMsg = msgs[key] && msgs[key][afterRank];
+        if (toastMsg && this.hud) {
+          this.hud.showToast(toastMsg, 3.6);
+        }
+      }
+    }
+
+    _getBandageDuration() {
+      return (this.player && this.player.getProficiencyRank && this.player.getProficiencyRank('fieldMedic') >= 1) ? 1.2 : 2.0;
+    }
+
+    _getSearchTimeScale() {
+      return (this.player && this.player.getProficiencyRank && this.player.getProficiencyRank('fieldcraft') >= 2) ? 0.75 : 1.0;
     }
 
     _updateSettings(patch) {
@@ -280,6 +401,9 @@
       }
       if (typeof patch.reduceFlash === 'boolean') {
         this.settings.reduceFlash = patch.reduceFlash;
+      }
+      if (typeof patch.difficulty === 'string' && DIFFICULTY_PRESETS[patch.difficulty]) {
+        this.settings.difficulty = patch.difficulty;
       }
       this._applySettings();
       this._saveSettings();
@@ -375,14 +499,21 @@
           unlockedWeapons: Object.assign({}, this.player.unlockedWeapons),
           ammo: Object.assign({}, this.player.ammo),
           inventory: JSON.parse(JSON.stringify(this.player.inventory)),
+          proficiency: Object.assign({}, this.player.proficiency),
           collectedPickups,
           deadMercs,
           deadBoars,
           flags: {
+            fenceCut: !!(this.level && this.level.fenceCut),
+            outpostGateOpen: !!(this.level && this.level.outpostGateOpen),
+            pumpPowered: !!(this.level && this.level.pumpPowered),
+            culvertDrained: !!(this.level && this.level.culvertDrained),
+            labSafeOpened: !!(this.level && this.level.labSafeOpened),
             generatorSabotaged: !!(this.level && this.level.generatorSabotaged),
             culvertUnlocked: !!(this.level && this.level.culvertUnlocked),
             blastGateOpen: !!(this.level && this.level.blastGateOpen),
-            drivesDecrypted: this.stats ? this.stats.drivesDecrypted : 0
+            drivesDecrypted: this.stats ? this.stats.drivesDecrypted : 0,
+            secondaryObjectives: (this.level && this.level.secondaryObjectives) ? Object.assign({}, this.level.secondaryObjectives) : {}
           }
         };
         localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
@@ -464,6 +595,14 @@
         if (cp.unlockedWeapons) this.player.unlockedWeapons = Object.assign({}, this.player.unlockedWeapons, cp.unlockedWeapons);
         if (cp.ammo) this.player.ammo = Object.assign({}, this.player.ammo, cp.ammo);
         if (cp.inventory) this.player.inventory = Object.assign({}, this.player.inventory, cp.inventory);
+        if (cp.proficiency) {
+          this.player.proficiency = Object.assign({}, this.player.proficiency, cp.proficiency);
+          if (this.player.getProficiencyRank && this.player.getProficiencyRank('fieldMedic') >= 2) {
+            const preset = this._getDifficultyPreset();
+            this.player.maxHp = preset.maxHp + 1;
+            this.player.hp = this.player.maxHp;
+          }
+        }
         if (cp.activeWeapon && this.player.unlockedWeapons[cp.activeWeapon]) {
           this.player.activeWeapon = cp.activeWeapon;
         }
@@ -502,6 +641,30 @@
           }
         }
         if (cp.flags && this.level) {
+          const openGateById = (gateId) => {
+            const gObs = this.level.obstacles.find((o) => o.id === gateId);
+            if (gObs) {
+              gObs.unlocked = true;
+              gObs.solid = false;
+            }
+          };
+          if (cp.flags.fenceCut) {
+            this.level.fenceCut = true;
+            openGateById('outpost_fence_gate');
+          }
+          if (cp.flags.outpostGateOpen) {
+            this.level.outpostGateOpen = true;
+            openGateById('outpost_east_gate');
+          }
+          if (cp.flags.pumpPowered) {
+            this.level.pumpPowered = true;
+            this.level.culvertDrained = true;
+            openGateById('ravine_east_gate');
+            openGateById('culvert_grate');
+          }
+          if (cp.flags.labSafeOpened) {
+            this.level.labSafeOpened = true;
+          }
           if (cp.flags.generatorSabotaged) {
             this.level.generatorSabotaged = true;
             for (let f = 0; f < this.level.floodlights.length; f++) {
@@ -510,8 +673,7 @@
           }
           if (cp.flags.culvertUnlocked) {
             this.level.culvertUnlocked = true;
-            const grate = this.level.obstacles.find((o) => o.id === 'culvert_grate');
-            if (grate) grate.unlocked = true;
+            openGateById('culvert_grate');
           }
           if (cp.flags.blastGateOpen) {
             this.level.blastGateOpen = true;
@@ -520,6 +682,9 @@
           }
           if (Number.isFinite(cp.flags.drivesDecrypted) && this.stats) {
             this.stats.drivesDecrypted = cp.flags.drivesDecrypted;
+          }
+          if (cp.flags.secondaryObjectives && typeof cp.flags.secondaryObjectives === 'object') {
+            this.level.secondaryObjectives = Object.assign({}, this.level.secondaryObjectives, cp.flags.secondaryObjectives);
           }
         }
 
@@ -542,23 +707,37 @@
       const sx = this.level ? this.level.spawn.x : 185;
       const sy = this.level ? this.level.spawn.y : 645;
       this.player = this.ns.Player ? new this.ns.Player(sx, sy) : null;
+      if (this.player) {
+        const preset = this._getDifficultyPreset();
+        this.player.maxHp = preset.maxHp;
+        this.player.hp = preset.maxHp;
+      }
 
       this.mercenaries = this.level ? this.level.mercenaries : [];
       this.boars = this.level ? this.level.boars : [];
+      this.drones = this.level ? (this.level.drones || []) : [];
       this.projectiles = [];
       this.acousticRings = [];
       this.floatingTexts = [];
       this.slashEffects = [];
       this.inkPuddles = [];
       this.footprints = [];
+      this.bloodDrips = [];
+      this.placedTripwireFlares = [];
+      this.smokeClouds = [];
+      this.placedJammers = [];
+      global.BelumGame = global.BelumGame || {};
+      global.BelumGame.activeSmokeClouds = this.smokeClouds;
       this.leafParticles = [];
       this.diegeticBadge = null;
+      this.holdAction = null;
 
       this.elapsedSec = 0;
       this.hitStopTimer = 0;
       this.inCombat = false;
       this.currentSectorId = 1;
       this.highestSavedSector = 1;
+      this._crossedSectors = new Set([1]);
       this.currentSectorLabel = 'SECTOR 1 // SUNGAI BELUM RIVERBANK';
       this.interactHint = '';
       this.klaxonTimer = 0;
@@ -640,20 +819,162 @@
       }
     }
 
-    tryOpenCamp() {
+    _hasAlertGuard() {
+      if (!Array.isArray(this.mercenaries)) return false;
+      for (let i = 0; i < this.mercenaries.length; i++) {
+        const m = this.mercenaries[i];
+        if (!m.dead && m.state === 'ALERT') return true;
+      }
+      return false;
+    }
+
+    _getNearbyBashaSite(maxDist) {
+      if (!this.player || !this.level || !Array.isArray(this.level.bashaSites)) return null;
+      const limit = Number.isFinite(maxDist) ? maxDist : 95;
+      for (let i = 0; i < this.level.bashaSites.length; i++) {
+        const site = this.level.bashaSites[i];
+        if (Math.hypot(site.x - this.player.centerX, site.y - this.player.centerY) <= limit) {
+          return site;
+        }
+      }
+      return null;
+    }
+
+    _getNextHandlerHint() {
+      const objs = this._getObjectives();
+      for (let i = 0; i < objs.length; i++) {
+        if (!objs[i].done) {
+          return `GGK COMMAND: Next priority — ${objs[i].text}.`;
+        }
+      }
+      return 'GGK COMMAND: Proceed to the extraction zone beyond the blast gate.';
+    }
+
+    tryOpenCamp(bashaSite) {
       if (this.mode === 'CAMP' && this.camp) {
         this.camp.close();
         return;
       }
       if (this.mode !== 'PLAYING') return;
-      if (this.inCombat) {
-        if (this.hud) this.hud.showToast('CANNOT RETREAT TO BIVOUAC WHILE IN COMBAT!', 2.4);
+      if (this.inCombat || this._hasAlertGuard()) {
+        if (this.hud) this.hud.showToast('HOSTILES ON ALERT — CANNOT USE FIELD CACHE!', 2.6);
         return;
       }
       if (this.camp && this.player) {
+        const site = bashaSite || this._getNearbyBashaSite(140) || { id: 'basha_field', label: 'Field Cache Basha', restedThisVisit: false };
         this.mode = 'CAMP';
-        this.camp.open(this.player);
+        this.camp.open(this.player, site, () => this._getNextHandlerHint());
       }
+    }
+
+    tryOpenCampFromHud() {
+      if (this.mode === 'CAMP' && this.camp) {
+        this.camp.close();
+        return;
+      }
+      if (this.mode !== 'PLAYING') return;
+      const site = this._getNearbyBashaSite(110);
+      if (!site) {
+        if (this.hud) this.hud.showToast('FIND A HIDDEN BASHA SITE (FIELD CACHE) — HOLD [E] THERE TO REST & RESUPPLY', 2.8);
+        return;
+      }
+      this.tryOpenCamp(site);
+    }
+
+    startBandage() {
+      const p = this.player;
+      if (!p || p.dead) return false;
+      if (!p.bleeding) {
+        if (this.hud) this.hud.showToast('NOT BLEEDING — NO BANDAGE NEEDED', 1.8);
+        return false;
+      }
+      if ((p.inventory.bandage || 0) <= 0) {
+        if (this.hud) this.hud.showToast('OUT OF BANDAGES — USE TOURNIQUET [Y] OR SALVAGE MED CASE', 2.4);
+        return false;
+      }
+      if (this.holdAction && this.holdAction.type === 'bandage') return true;
+      const dur = this._getBandageDuration();
+      this.holdAction = {
+        type: 'bandage',
+        autoAdvance: true,
+        x: p.centerX,
+        y: p.y,
+        elapsed: 0,
+        duration: dur,
+        label: `BANDAGING (${dur.toFixed(1)}s)`,
+        onComplete: () => {
+          if (p.inventory.bandage > 0) p.inventory.bandage--;
+          p.bleeding = false;
+          p.bleedTickTimer = 0;
+          this._recordProficiencyAction('fieldMedic', 1);
+          if (this.sound) this.sound.playDecoyClatter();
+          if (this.hud) this.hud.showToast('PRESSURE BANDAGE APPLIED — BLEEDING STOPPED', 2.2);
+        }
+      };
+      return true;
+    }
+
+    _toggleFilterMask() {
+      if (!this.player) return;
+      const res = this.player.toggleFilterMask();
+      if (this.hud) this.hud.showToast(res.message, 2.2);
+      if (res.ok && this.sound) this.sound.playDecoyClatter();
+    }
+
+    _useSporeInjector() {
+      if (!this.player) return;
+      const res = this.player.useSporeInjector();
+      if (this.hud) this.hud.showToast(res.message, 2.4);
+      if (res.ok) {
+        this._recordProficiencyAction('fieldMedic', 1);
+        if (this.sound) this.sound.playDecoyClatter();
+      }
+    }
+
+    placeTripwireFlare() {
+      const p = this.player;
+      if (!p || (p.inventory.tripwireFlares || 0) <= 0) {
+        if (this.hud) this.hud.showToast('NO TRIPWIRE FLARES — IMPROVISE AT A FIELD WORKBENCH', 2.0);
+        return false;
+      }
+      p.inventory.tripwireFlares--;
+      this.placedTripwireFlares.push({
+        id: `tf_${Date.now()}`,
+        x: p.centerX,
+        y: p.centerY + 8,
+        active: true
+      });
+      if (this.sound) this.sound.playDecoyClatter();
+      if (this.hud) this.hud.showToast('TRIPWIRE FLARE SET — BLINDS GUARDS 3s & PROVOKES BOARS', 2.4);
+      return true;
+    }
+
+    throwSmokeRag() {
+      const p = this.player;
+      if (!p || (p.inventory.smokeRags || 0) <= 0) {
+        if (this.hud) this.hud.showToast('NO DIESEL SMOKE RAGS — IMPROVISE AT A FIELD WORKBENCH', 2.0);
+        return false;
+      }
+      p.inventory.smokeRags--;
+      const tx = p.centerX + Math.cos(p.aimAngle) * 135;
+      const ty = p.centerY + Math.sin(p.aimAngle) * 135;
+      this.smokeClouds.push({ x: tx, y: ty, radius: 98, ttl: 6.0 });
+      if (this.sound) this.sound.playDecoyClatter();
+      if (this.hud) this.hud.showToast('DIESEL SMOKE SCREEN DEPLOYED (6s VISION BLOCK)', 2.2);
+      return true;
+    }
+
+    placeRadioJammer() {
+      const p = this.player;
+      if (!p || (p.inventory.radioJammers || 0) <= 0) {
+        if (this.hud) this.hud.showToast('NO RADIO JAMMERS — IMPROVISE AT A FIELD WORKBENCH', 2.0);
+        return false;
+      }
+      p.inventory.radioJammers--;
+      this.placedJammers.push({ x: p.centerX, y: p.centerY + 6, radius: 340, ttl: 20.0 });
+      if (this.sound) this.sound.playRadioAlert();
+      if (this.hud) this.hud.showToast('RADIO JAMMER ACTIVE — GUARD ALLY CALLS BLOCKED FOR 20s', 2.6);
+      return true;
     }
 
     _startLoop() {
@@ -691,14 +1012,20 @@
         player: this.player,
         mercenaries: this.mercenaries,
         boars: this.boars,
+        drones: this.drones,
         projectiles: this.projectiles,
         acousticRings: this.acousticRings,
         floatingTexts: this.floatingTexts,
         slashEffects: this.slashEffects,
         inkPuddles: this.inkPuddles,
         footprints: this.footprints,
+        bloodDrips: this.bloodDrips,
+        placedTripwireFlares: this.placedTripwireFlares,
+        smokeClouds: this.smokeClouds,
+        placedJammers: this.placedJammers,
         leafParticles: this.leafParticles,
         diegeticBadge: this.diegeticBadge,
+        holdAction: this.holdAction,
         camera: this.camera
       };
     }
@@ -707,15 +1034,17 @@
       const p = this.player;
       const l = this.level;
       if (!p || !l) return [];
-      const s1GuardDead = this.mercenaries.some((m) => m.id === 'merc_s1_1' && m.dead);
+      const sec = l.secondaryObjectives || {};
+      const secCount = ['bodyCam', 'samplePhotos', 'scientistFreed', 'gpsPlanted'].filter((k) => !!sec[k]).length;
+      const hasDrive1 = p.inventory.encryptedDrives > 0 || p.inventory.decryptedLore.length > 0;
       return [
-        { id: 'arm', text: 'Equip Parang & Crossbow at Riverbank', done: p.unlockedWeapons.crossbow },
-        { id: 's1', text: 'Stealth-neutralize Riverbank patrol guard', done: s1GuardDead },
-        { id: 'drive', text: 'Recover Encrypted Drive 01 in Outpost', done: p.inventory.encryptedDrives > 0 || p.inventory.decryptedLore.length > 0 },
-        { id: 'keycard', text: 'Acquire Tier-1 Security Keycard', done: p.inventory.hasKeycard },
-        { id: 'ravine', text: 'Cross Infected Ravine (lure Boars w/ Rock)', done: p.x > 3140 },
-        { id: 'gate', text: 'Swipe Keycard & survive 15s Blast Gate hold', done: l.blastGateOpen },
-        { id: 'extract', text: 'Enter Facility Sub-Zero Extraction Zone', done: this.mode === 'VICTORY' }
+        { id: 'cut_fence', text: 'Find Bolt Cutters (Fishing Hut) & cut Outpost Fence', done: !!l.fenceCut },
+        { id: 'drive', text: 'Recover Drive 01 in VBS Field Lab (unlock Ravine Gate)', done: hasDrive1 && !!l.outpostGateOpen },
+        { id: 'pump', text: 'Restore Ravine Pump Station power (drain Culvert)', done: !!l.pumpPowered },
+        { id: 'keycard', text: 'Get Tier-1 Keycard (Lab Safe 4719 or Cmdr Ward)', done: !!p.inventory.hasKeycard },
+        { id: 'gate', text: 'Swipe Keycard & survive 15s Blast Gate hold', done: !!l.blastGateOpen },
+        { id: 'extract', text: 'Enter Facility Sub-Zero Extraction Zone', done: this.mode === 'VICTORY' },
+        { id: 'secondary', text: `Secondary Objectives (${secCount}/4 complete)`, done: secCount === 4 }
       ];
     }
 
@@ -742,15 +1071,28 @@
         this.input.update({ x: this.player.centerX, y: this.player.centerY }, this.camera);
         const actions = this.input.consumeActions();
         if (actions.toggleCamp) {
-          this.tryOpenCamp();
-          return;
+          // Task 6c: Pressing B anywhere no longer opens camp!
+          if (this.hud) this.hud.showToast('FIND A HIDDEN BASHA SITE (FIELD CACHE) — HOLD [E] TO REST & RESUPPLY', 2.8);
         }
         if (actions.weaponSelect) this._selectWeapon(actions.weaponSelect);
         if (actions.dodge) this.player.triggerDodge(this.input.moveVector);
+        if (actions.bandage) this.startBandage();
+        if (actions.tourniquet) {
+          const tRes = this.player.applyTourniquet();
+          if (this.hud) this.hud.showToast(tRes.message, 2.4);
+          if (tRes.ok) this._recordProficiencyAction('fieldMedic', 1);
+        }
+        if (actions.toggleFilterMask) this._toggleFilterMask();
+        if (actions.throwSmoke) this.throwSmokeRag();
+        if (actions.placeJammer) this.placeRadioJammer();
+        if (actions.placeTripwireFlare) this.placeTripwireFlare();
         if (actions.quickConsumable) {
           const res = this.player.useQuickConsumable();
           if (this.hud) this.hud.showToast(res.message, 2.2);
           if (res.used && this.sound) this.sound.playDecoyClatter();
+          if (res.used === 'medkit' || res.used === 'jungleStew' || res.used === 'bandage' || res.used === 'tourniquet' || res.used === 'sporeInjector') {
+            this._recordProficiencyAction('fieldMedic', 1);
+          }
         }
         if (actions.interact) this._handleInteractOrTakedown();
         if (actions.meleeSlash) this._performParangSlash();
@@ -761,10 +1103,43 @@
         }
       }
 
-      // 2. Update Player & AAA Spring Camera (with stealth/sprint zoom)
+      // 2. Update Player, Survival Needs & AAA Spring Camera
       const prevX = this.player.centerX;
       const prevY = this.player.centerY;
       this.player.update(dt, this.input, this.level);
+      const diffPreset = this._getDifficultyPreset();
+      if (typeof this.player.updateNeeds === 'function') {
+        const needsRes = this.player.updateNeeds(dt, {
+          isMoving: this.player.moving,
+          isSprinting: this.player.sprinting,
+          drainMult: diffPreset ? diffPreset.needsDrainMult : 1.0
+        });
+        if (needsRes && needsRes.dehydratedTick) {
+          this._spawnFloat(this.player.centerX, this.player.y - 12, 'DEHYDRATED -1 HP', '#F85A5A', true);
+          if (this.hud) this.hud.showToast('SEVERE DEHYDRATION — DRINK PURIFIED WATER!', 2.4);
+        }
+      }
+      this._updateSurvivalAndGear(dt);
+      this._updateHoldAction(dt);
+      // Task 7 Close Quarters Rank 2: Silent body drag follows player smoothly
+      if (this.player.draggingBody && this.player.draggingBody.dead) {
+        const body = this.player.draggingBody;
+        const backX = this.player.x - (this.player.facingRight ? 26 : -26);
+        const backY = this.player.y + 4;
+        body.x += (backX - body.x) * Math.min(1, dt * 8);
+        body.y += (backY - body.y) * Math.min(1, dt * 8);
+      }
+      // Task 7 Marksmanship Rank 2: Auto-recover carbon bolts within 60 px
+      if (this.player.getProficiencyRank && this.player.getProficiencyRank('marksmanship') >= 2 && this.level && Array.isArray(this.level.interactables)) {
+        for (let i = 0; i < this.level.interactables.length; i++) {
+          const it = this.level.interactables[i];
+          if (!it.collected && it.type === 'bolt_pickup' && Math.hypot(it.x - this.player.centerX, it.y - this.player.centerY) <= 60) {
+            it.collected = true;
+            this.player.ammo.crossbow += 1;
+            this._spawnFloat(this.player.centerX, this.player.y - 16, '+1 BOLT', '#111E33', false);
+          }
+        }
+      }
       if (this.camera) {
         this.camera.update(
           dt,
@@ -790,6 +1165,21 @@
           }
           this._vibrate([30, 50]);
           if (this.sound) this.sound.playRadioAlert();
+          // Task 6d: Radio Jammer blocks guard radio ally calls within jammer radius for 20s
+          let jammed = false;
+          if (Array.isArray(this.placedJammers)) {
+            for (let k = 0; k < this.placedJammers.length; k++) {
+              const jm = this.placedJammers[k];
+              if (Math.hypot(jm.x - merc.centerX, jm.y - merc.centerY) <= (jm.radius || 340)) {
+                jammed = true;
+                break;
+              }
+            }
+          }
+          if (jammed) {
+            this._spawnFloat(merc.centerX, merc.y - 24, 'RADIO JAMMED!', '#111E33', true);
+            return;
+          }
           this._spawnFloat(merc.centerX, merc.y - 24, alertFaction === 'FAUNA' ? 'BOAR!' : 'CONTACT!', '#F85A5A', false);
           for (let j = 0; j < this.mercenaries.length; j++) {
             const ally = this.mercenaries[j];
@@ -842,6 +1232,11 @@
           if (this.camera) this.camera.addTrauma(0.75, dx, dy);
           if (this.sound) this.sound.playBoarImpact();
           this._spawnFloat(victim.centerX, victim.y - 12, label || String(dmg), '#F85A5A', true);
+          if (victim === this.player && !this.player.dead) {
+            // Task 6b: Boar tusk hit has 100% bleeding chance
+            this.player.bleeding = true;
+            if (this.hud) this.hud.showToast('GORED & BLEEDING — PRESS [H] TO BANDAGE OR [Y] FOR TOURNIQUET!', 3.0);
+          }
           if (victim.faction === 'MERC') {
             this.stats.factionInfightingHits++;
             if (this.hud) this.hud.showToast('FACTION INFIGHTING: MUTATED BOAR GORED IRONCLAD PMC!', 2.6);
@@ -873,6 +1268,22 @@
             anyAlert = true;
             if (distToPlayer < nearestAlertDist) nearestAlertDist = distToPlayer;
           }
+          // Task 6b: Guards crossing crimson blood drips follow the player's bleeding trail
+          if ((m.state === 'PATROL' || m.state === 'SUSPICIOUS') && this.bloodDrips.length > 0) {
+            for (let b = this.bloodDrips.length - 1; b >= 0; b--) {
+              const drip = this.bloodDrips[b];
+              if (!drip.inspected && Math.hypot(m.centerX - drip.x, m.centerY - drip.y) < 54) {
+                drip.inspected = true;
+                const nextDrip = this.bloodDrips[Math.min(this.bloodDrips.length - 1, b + 1)];
+                const trailX = nextDrip && nextDrip !== drip ? nextDrip.x : this.player.centerX;
+                const trailY = nextDrip && nextDrip !== drip ? nextDrip.y : this.player.centerY;
+                const trailAng = Math.atan2(trailY - drip.y, trailX - drip.x);
+                m.inspectFootprint(trailX, trailY, trailAng);
+                this._spawnFloat(m.centerX, m.y - 18, 'BLOOD TRAIL!', '#F85A5A', false);
+                break;
+              }
+            }
+          }
           // AAA Stealth Detail: Mercenaries crossing fresh mud footprints get +20% suspicion & turn to inspect
           if (m.state === 'PATROL' && this.footprints.length > 0) {
             for (let f = this.footprints.length - 1; f >= 0; f--) {
@@ -889,6 +1300,18 @@
       }
       for (let i = 0; i < this.boars.length; i++) {
         this.boars[i].update(dt, this.player, this.mercenaries, this.level, aiEvents);
+      }
+      if (Array.isArray(this.drones)) {
+        const droneEvents = Object.assign({}, aiEvents, {
+          onDroneSpot: (drone) => {
+            if (this.sound) this.sound.playRadioAlert();
+            this._spawnFloat(drone.x, drone.y - 68, 'DRONE SPOTTED!', '#F85A5A', true);
+            if (this.hud) this.hud.showToast('PMC SURVEILLANCE DRONE SPOTTED YOU — GUARDS ALERTED!', 2.6);
+          }
+        });
+        for (let i = 0; i < this.drones.length; i++) {
+          this.drones[i].update(dt, this.player, this.mercenaries, droneEvents);
+        }
       }
       this.inCombat = anyAlert || this.level.blastGateOpening;
 
@@ -911,6 +1334,119 @@
       // 11. Game Over Check
       if (this.player.dead) {
         this._triggerEndgame(false);
+      }
+    }
+
+    _updateSurvivalAndGear(dt) {
+      const p = this.player;
+      const l = this.level;
+      if (!p || !l) return;
+
+      // 1. Bleeding: 1 HP lost every 6 s + crimson blood drips every 1.5 s
+      if (p.bleeding && !p.dead) {
+        p.bleedTickTimer += dt;
+        if (p.bleedTickTimer >= 6.0) {
+          p.bleedTickTimer -= 6.0;
+          const dealt = p.takeDamage(1);
+          if (dealt > 0) {
+            this._vibrate([25, 40]);
+            this._spawnFloat(p.centerX, p.y - 12, 'BLEEDING -1 HP', '#F85A5A', true);
+          }
+        }
+        p.bleedDripTimer += dt;
+        if (p.bleedDripTimer >= 1.5) {
+          p.bleedDripTimer -= 1.5;
+          this.bloodDrips.push({
+            x: p.centerX + (Math.random() - 0.5) * 6,
+            y: p.y + p.height - 4,
+            age: 0,
+            duration: 14.0,
+            inspected: false
+          });
+        }
+      } else {
+        p.bleedTickTimer = 0;
+        p.bleedDripTimer = 0;
+      }
+
+      // Age & expire blood drips
+      for (let i = this.bloodDrips.length - 1; i >= 0; i--) {
+        this.bloodDrips[i].age += dt;
+        if (this.bloodDrips[i].age >= this.bloodDrips[i].duration) {
+          this.bloodDrips.splice(i, 1);
+        }
+      }
+
+      // 2. Basha Site discovery (Task 6c)
+      if (Array.isArray(l.bashaSites)) {
+        for (let i = 0; i < l.bashaSites.length; i++) {
+          const site = l.bashaSites[i];
+          if (!site.discovered && Math.hypot(site.x - p.centerX, site.y - p.centerY) <= 150) {
+            site.discovered = true;
+            if (this.hud) this.hud.showToast(`BASHA SITE DISCOVERED: ${site.label.toUpperCase()} — HOLD [E] TO ACCESS`, 3.2);
+          }
+        }
+      }
+
+      // 3. Placed Tripwire Flares (Task 6d): alerts player, blinds guards 3s, provokes boars
+      if (Array.isArray(this.placedTripwireFlares)) {
+        for (let i = this.placedTripwireFlares.length - 1; i >= 0; i--) {
+          const fl = this.placedTripwireFlares[i];
+          if (!fl.active) {
+            this.placedTripwireFlares.splice(i, 1);
+            continue;
+          }
+          let triggered = false;
+          for (let j = 0; j < this.mercenaries.length; j++) {
+            const m = this.mercenaries[j];
+            if (!m.dead && Math.hypot(m.centerX - fl.x, m.centerY - fl.y) < 48) {
+              triggered = true;
+              break;
+            }
+          }
+          if (!triggered) {
+            for (let j = 0; j < this.boars.length; j++) {
+              const b = this.boars[j];
+              if (!b.dead && Math.hypot(b.centerX - fl.x, b.centerY - fl.y) < 54) {
+                triggered = true;
+                break;
+              }
+            }
+          }
+          if (triggered) {
+            fl.active = false;
+            this.placedTripwireFlares.splice(i, 1);
+            if (this.sound) this.sound.playAlarmKlaxon();
+            this._emitAcousticRing(fl.x, fl.y, 260, true);
+            this._spawnFloat(fl.x, fl.y - 18, 'FLARE POP!', '#F85A5A', true);
+            if (this.hud) this.hud.showToast('TRIPWIRE FLARE TRIGGERED — GUARDS BLINDED 3s & BOARS PROVOKED!', 2.8);
+            for (let j = 0; j < this.mercenaries.length; j++) {
+              const m = this.mercenaries[j];
+              if (!m.dead && Math.hypot(m.centerX - fl.x, m.centerY - fl.y) <= 170) {
+                m.blindTimer = 3.0;
+                this._spawnFloat(m.centerX, m.y - 18, 'BLINDED (3s)', '#F85A5A', true);
+              }
+            }
+          }
+        }
+      }
+
+      // 4. Diesel Smoke Rag Clouds (6s vision block)
+      if (Array.isArray(this.smokeClouds)) {
+        for (let i = this.smokeClouds.length - 1; i >= 0; i--) {
+          this.smokeClouds[i].ttl -= dt;
+          if (this.smokeClouds[i].ttl <= 0) this.smokeClouds.splice(i, 1);
+        }
+        global.BelumGame = global.BelumGame || {};
+        global.BelumGame.activeSmokeClouds = this.smokeClouds;
+      }
+
+      // 5. Radio Jammers (20s ally-call block)
+      if (Array.isArray(this.placedJammers)) {
+        for (let i = this.placedJammers.length - 1; i >= 0; i--) {
+          this.placedJammers[i].ttl -= dt;
+          if (this.placedJammers[i].ttl <= 0) this.placedJammers.splice(i, 1);
+        }
       }
     }
 
@@ -972,6 +1508,151 @@
       }
     }
 
+    _getTakedownDuration() {
+      return (this.player && this.player.getProficiencyRank && this.player.getProficiencyRank('closeQuarters') >= 1) ? 0.45 : 0.6;
+    }
+
+    _executeSilentTakedown(m) {
+      const p = this.player;
+      if (!p || !m || m.dead) return;
+      p.attackCooldown = 0.42;
+      p.parangAnimTimer = 0.5;
+      if (p.animParang) p.animParang.reset();
+      if (this.sound) this.sound.playParangSlash();
+      const dx = m.centerX - p.centerX;
+      const dy = m.centerY - p.centerY;
+
+      this.slashEffects.push({
+        x: p.centerX,
+        y: p.centerY - 8,
+        angle: Math.atan2(dy, dx),
+        radius: 66,
+        isStealth: true,
+        age: 0,
+        duration: 0.22
+      });
+
+      m.takeDamage(999, { x: p.centerX, y: p.centerY }, {
+        onMercKilled: (killed) => {
+          this.stats.enemiesNeutralized++;
+          this.stats.stealthTakedowns++;
+          this._spawnInkPuddle(killed.centerX, killed.y + killed.height - 6, killed.role === 'commander' ? 40 : 30);
+        }
+      });
+
+      // Fix 6.5: Silent stealth takedowns feel quiet (0.2 trauma, no hit-stop)
+      if (this.camera) this.camera.addTrauma(0.2, dx, dy);
+      this._vibrate([25, 40, 25]);
+      this._spawnFloat(m.centerX, m.y - 16, 'SILENT TAKEDOWN', '#F85A5A', true);
+      this._recordProficiencyAction('closeQuarters', 1);
+    }
+
+    _updateHoldAction(dt) {
+      const p = this.player;
+      if (!p || !this.input) {
+        this.holdAction = null;
+        return;
+      }
+      const held = this.input.isInteractHeld();
+
+      if (!this.holdAction) {
+        if (held) {
+          for (let i = 0; i < this.mercenaries.length; i++) {
+            const m = this.mercenaries[i];
+            if (m.dead || m.state === 'ALERT') continue;
+            const dist = Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY);
+            if (dist <= 78 && m.isBehindMe(p.centerX, p.centerY)) {
+              this.holdAction = {
+                type: 'takedown',
+                target: m,
+                x: m.centerX,
+                y: m.y,
+                elapsed: 0,
+                duration: this._getTakedownDuration(),
+                label: 'HOLD [E] TAKEDOWN'
+              };
+              break;
+            }
+          }
+          // Task 6c: Hold E at a basha site to enter Field Cache (only if no guard is ALERT)
+          if (!this.holdAction) {
+            const site = this._getNearbyBashaSite(95);
+            if (site) {
+              if (this.inCombat || this._hasAlertGuard()) {
+                if (this.hud) this.hud.showToast('HOSTILES ON ALERT — CANNOT USE FIELD CACHE!', 2.4);
+              } else {
+                this.holdAction = {
+                  type: 'basha',
+                  x: site.x,
+                  y: site.y,
+                  elapsed: 0,
+                  duration: 0.6,
+                  maxDist: 105,
+                  cancelOnAlert: true,
+                  label: 'HOLD [E] FIELD CACHE',
+                  onComplete: () => this.tryOpenCamp(site)
+                };
+              }
+            }
+          }
+        }
+        return;
+      }
+
+      const ha = this.holdAction;
+      if (ha.type === 'takedown') {
+        const m = ha.target;
+        const invalid = !m || m.dead || m.state === 'ALERT' || Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) > 84 || !m.isBehindMe(p.centerX, p.centerY);
+        if (!held || invalid) {
+          // Task 9: Releasing E early fails takedown and makes the guard turn toward the player
+          if (m && !m.dead && m.state !== 'ALERT' && ha.elapsed > 0.02) {
+            const turnAngle = Math.atan2(p.centerY - m.centerY, p.centerX - m.centerX);
+            m.facingAngle = turnAngle;
+            m.targetFacingAngle = turnAngle;
+            m.facingRight = Math.cos(turnAngle) >= 0;
+            m._updateSpriteDir();
+            m.hearSound(p.centerX, p.centerY, false);
+            this._spawnFloat(m.centerX, m.y - 16, 'TAKEDOWN ABORTED!', '#F85A5A', false);
+          }
+          this.holdAction = null;
+          return;
+        }
+        ha.x = m.centerX;
+        ha.y = m.y;
+        ha.elapsed += dt;
+        if (ha.elapsed >= ha.duration) {
+          this.holdAction = null;
+          this._executeSilentTakedown(m);
+        }
+      } else if (ha.autoAdvance && typeof ha.onComplete === 'function') {
+        // Timed self-action (e.g. Bandage 2.0s / 1.2s): cancels if sprinting or attacking
+        if (p.dead || p.sprinting || p.attackCooldown > 0.1) {
+          this.holdAction = null;
+          return;
+        }
+        ha.x = p.centerX;
+        ha.y = p.y;
+        ha.elapsed += dt;
+        if (ha.elapsed >= ha.duration) {
+          const doneFn = ha.onComplete;
+          this.holdAction = null;
+          doneFn();
+        }
+      } else if (typeof ha.onComplete === 'function') {
+        const dist = Math.hypot((ha.x || 0) - p.centerX, (ha.y || 0) - p.centerY);
+        if (!held || dist > (ha.maxDist || 90) || (ha.cancelOnAlert && (this.inCombat || this._hasAlertGuard()))) {
+          this.holdAction = null;
+          return;
+        }
+        ha.elapsed += dt;
+        if (ha.elapsed >= ha.duration) {
+          const doneFn = ha.onComplete;
+          this.holdAction = null;
+          doneFn();
+        }
+      }
+    }
+
     _performParangSlash() {
       const p = this.player;
       if (!p || p.attackCooldown > 0) return;
@@ -999,31 +1680,16 @@
         const dy = m.centerY - p.centerY;
         const dist = Math.hypot(dx, dy);
         if (dist <= reach) {
-          const isStealthTakedown = m.state !== 'ALERT' && m.isBehindMe(p.centerX, p.centerY);
-          const dmg = isStealthTakedown ? 999 : 45;
+          const dmg = 45;
           m.takeDamage(dmg, { x: p.centerX, y: p.centerY }, {
             onMercKilled: (killed) => {
               this.stats.enemiesNeutralized++;
               this._spawnInkPuddle(killed.centerX, killed.y + killed.height - 6, killed.role === 'commander' ? 40 : 30);
-              if (isStealthTakedown) this.stats.stealthTakedowns++;
-              if (killed.role === 'commander') {
-                p.inventory.hasKeycard = true;
-              }
             }
           });
-
-          // Fix 6.5: Silent stealth takedowns feel quiet (0.2 trauma, no hit-stop); open melee keeps 45ms hit-stop
-          if (!isStealthTakedown) {
-            this.triggerHitStop(45);
-          }
-          if (this.camera) this.camera.addTrauma(isStealthTakedown ? 0.2 : 0.34, dx, dy);
-          if (isStealthTakedown) {
-            this._vibrate([25, 40, 25]);
-            this.slashEffects[this.slashEffects.length - 1].isStealth = true;
-            this._spawnFloat(m.centerX, m.y - 16, 'SILENT TAKEDOWN', '#F85A5A', true);
-          } else {
-            this._spawnFloat(m.centerX, m.y - 14, String(dmg), '#F85A5A', true);
-          }
+          this.triggerHitStop(45);
+          if (this.camera) this.camera.addTrauma(0.34, dx, dy);
+          this._spawnFloat(m.centerX, m.y - 14, String(dmg), '#F85A5A', true);
         }
       }
 
@@ -1056,7 +1722,7 @@
         else if (p.unlockedWeapons.pistol && p.ammo.pistol > 0) weapon = 'pistol';
         else if (p.ammo.decoy > 0) weapon = 'decoy';
         else {
-          if (this.hud) this.hud.showToast('NO RANGED AMMO — USE PARANG OR CRAFT AT CAMP [B]', 2.0);
+          if (this.hud) this.hud.showToast('NO RANGED AMMO — USE PARANG OR SALVAGE SUPPLIES', 2.0);
           return;
         }
       }
@@ -1064,7 +1730,7 @@
       const ang = p.aimAngle;
       if (weapon === 'crossbow') {
         if (p.ammo.crossbow <= 0) {
-          if (this.hud) this.hud.showToast('OUT OF BOLTS — RETRIEVE OR FLETCH AT CAMP [B]', 2.0);
+          if (this.hud) this.hud.showToast('OUT OF BOLTS — RECOVER OR SALVAGE CARBON BOLTS', 2.0);
           return;
         }
         p.ammo.crossbow--;
@@ -1079,13 +1745,13 @@
             y: p.centerY - 8 + Math.sin(ang) * 20,
             vx: Math.cos(ang) * 680,
             vy: Math.sin(ang) * 680,
-            damage: 55,
+            damage: 60, // Task 9: 60 dmg kills 60 HP rifleman in 1 shot from stealth
             maxRange: 450
           })
         );
       } else if (weapon === 'pistol') {
         if (p.ammo.pistol <= 0) {
-          if (this.hud) this.hud.showToast('OUT OF 9MM ROUNDS — PRESS AT WORKBENCH [B]', 2.0);
+          if (this.hud) this.hud.showToast('OUT OF 9MM ROUNDS — SALVAGE MAGAZINES', 2.0);
           return;
         }
         p.ammo.pistol--;
@@ -1101,14 +1767,15 @@
             y: p.centerY - 8 + Math.sin(ang) * 20,
             vx: Math.cos(ang) * 900,
             vy: Math.sin(ang) * 900,
-            damage: 70,
+            damage: 55, // Task 9: 55 body dmg (2 shots) or 1 headshot-zone hit
             maxRange: 550
           })
         );
-        this._emitAcousticRing(p.centerX, p.centerY, 120, false);
+        // Task 9: Suppressed 9mm noise radius increased to 220 px
+        this._emitAcousticRing(p.centerX, p.centerY, 220, false);
       } else if (weapon === 'decoy') {
         if (p.ammo.decoy <= 0) {
-          if (this.hud) this.hud.showToast('OUT OF DECOY ROCKS', 1.6);
+          if (this.hud) this.hud.showToast('OUT OF NOISEMAKERS', 1.6);
           return;
         }
         p.ammo.decoy--;
@@ -1178,13 +1845,55 @@
       const p = this.player;
       if (!p || !this.level) return;
 
+      // Task 7 Close Quarters Rank 2: Press E while dragging a body to drop it silently
+      if (p.draggingBody) {
+        p.draggingBody = null;
+        if (this.hud) this.hud.showToast('BODY DROPPED', 1.6);
+        return;
+      }
+
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (m.dead || m.state === 'ALERT') continue;
         const dist = Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY);
         if (dist <= 78 && m.isBehindMe(p.centerX, p.centerY)) {
-          this._performParangSlash();
+          if (!this.holdAction || this.holdAction.type !== 'takedown') {
+            this.holdAction = {
+              type: 'takedown',
+              target: m,
+              x: m.centerX,
+              y: m.y,
+              elapsed: 0,
+              duration: this._getTakedownDuration(),
+              label: 'HOLD [E] TAKEDOWN'
+            };
+          }
           return;
+        }
+      }
+
+      // Search Commander Ward's dead body for Tier-1 Keycard (Task 4: alternate keycard path)
+      for (let i = 0; i < this.mercenaries.length; i++) {
+        const m = this.mercenaries[i];
+        if (m.dead && m.role === 'commander' && !m.bodySearched && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 85) {
+          m.bodySearched = true;
+          p.inventory.hasKeycard = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.sound) this.sound.playDecoyClatter();
+          if (this.hud) this.hud.showToast('SALVAGED TIER-1 SECURITY KEYCARD FROM CMDR WARD!', 3.2);
+          return;
+        }
+      }
+
+      // Task 7 Close Quarters Rank 2: Pick up & silently drag dead guard body
+      if (p.getProficiencyRank && p.getProficiencyRank('closeQuarters') >= 2) {
+        for (let i = 0; i < this.mercenaries.length; i++) {
+          const m = this.mercenaries[i];
+          if (m.dead && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 85) {
+            p.draggingBody = m;
+            if (this.hud) this.hud.showToast('SILENT BODY DRAG — PRESS [E] TO DROP', 2.0);
+            return;
+          }
         }
       }
 
@@ -1194,40 +1903,188 @@
           b.meatHarvested = true;
           p.inventory.boarMeat++;
           if (this.sound) this.sound.playParangSlash();
-          if (this.hud) this.hud.showToast('HARVESTED BOAR MEAT — COOK JUNGLE STEW AT CAMP [B]', 2.6);
+          if (this.hud) this.hud.showToast('BOAR MEAT TAKEN — GRILL AT A FIELD CACHE', 2.6);
           return;
         }
       }
+
+      const openGateById = (gateId) => {
+        const gObs = this.level.obstacles.find((o) => o.id === gateId);
+        if (gObs) {
+          gObs.unlocked = true;
+          gObs.solid = false;
+        }
+      };
 
       const items = this.level.interactables || [];
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (it.collected) continue;
-        if (Math.hypot(it.x - p.centerX, it.y - p.centerY) > 75) continue;
+        if (Math.hypot(it.x - p.centerX, it.y - p.centerY) > 78) continue;
 
         if (it.type === 'weapon_parang') {
           it.collected = true;
           p.unlockedWeapons.parang = true;
           p.inventory.hasParangPickup = true;
-          if (this.hud) this.hud.showToast('ACQUIRED STEEL PARANG — APPROACH GUARDS FROM BEHIND', 2.8);
+          if (this.hud) this.hud.showToast('ACQUIRED STEEL PARANG — HOLD [E] BEHIND GUARDS', 2.8);
         } else if (it.type === 'weapon_crossbow') {
           it.collected = true;
           p.unlockedWeapons.crossbow = true;
           p.ammo.crossbow += 5;
-          if (this.hud) this.hud.showToast('ACQUIRED SILENT CROSSBOW (+5 RETRIEVABLE BOLTS)', 2.8);
+          if (this.hud) this.hud.showToast('ACQUIRED COMPOUND CROSSBOW (+5 CARBON BOLTS)', 2.8);
         } else if (it.type === 'weapon_pistol') {
           it.collected = true;
           p.unlockedWeapons.pistol = true;
           p.ammo.pistol += 8;
           if (this.hud) this.hud.showToast('ACQUIRED SUPPRESSED 9MM PISTOL (+8 ROUNDS)', 2.8);
+        } else if (it.type === 'bolt_cutters') {
+          it.collected = true;
+          p.inventory.hasBoltCutters = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SALVAGED HEAVY BOLT CUTTERS — CUT THE OUTPOST FENCE', 3.0);
+        } else if (it.type === 'cut_fence') {
+          if (!p.inventory.hasBoltCutters) {
+            if (this.hud) this.hud.showToast('LOCKED FENCE — FIND BOLT CUTTERS IN SOUTH FISHING HUT BOAT LOCKER', 3.0);
+            return;
+          }
+          it.collected = true;
+          this.level.fenceCut = true;
+          openGateById('outpost_fence_gate');
+          this._emitAcousticRing(it.x, it.y, 140, false);
+          if (this.hud) this.hud.showToast('OUTPOST FENCE CUT OPEN — SECTOR 2 ACCESSIBLE!', 3.0);
+        } else if (it.type === 'lab_safe') {
+          if (!p.inventory.hasSafeCode) {
+            if (this.hud) this.hud.showToast('LAB SAFE LOCKED — DECRYPT DRIVE 01 AT A FIELD CACHE FOR 4-DIGIT CODE', 3.2);
+            return;
+          }
+          it.collected = true;
+          this.level.labSafeOpened = true;
+          p.inventory.hasKeycard = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SAFE CODE 4719 ACCEPTED — ACQUIRED TIER-1 SECURITY KEYCARD!', 3.4);
+        } else if (it.type === 'outpost_gate') {
+          const hasDrive1 = p.inventory.encryptedDrives > 0 || p.inventory.decryptedLore.length > 0;
+          if (!hasDrive1) {
+            if (this.hud) this.hud.showToast('RECOVER ENCRYPTED DRIVE 01 FROM VBS FIELD LAB FIRST', 3.0);
+            return;
+          }
+          it.collected = true;
+          this.level.outpostGateOpen = true;
+          openGateById('outpost_east_gate');
+          if (this.hud) this.hud.showToast('RAVINE CHECKPOINT UNLOCKED — ENTERING SECTOR 3!', 3.0);
+        } else if (it.type === 'pump_station') {
+          it.collected = true;
+          this.level.pumpPowered = true;
+          this.level.culvertDrained = true;
+          this.level.culvertUnlocked = true;
+          openGateById('ravine_east_gate');
+          openGateById('culvert_grate');
+          this._emitAcousticRing(it.x, it.y, 260, false);
+          if (this.hud) this.hud.showToast('PUMP STATION POWERED — CULVERT DRAINED & PERIMETER GATE OPEN!', 3.4);
+        } else if (it.type === 'sec_body_cam') {
+          it.collected = true;
+          if (this.level.secondaryObjectives) this.level.secondaryObjectives.bodyCam = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SECONDARY OBJECTIVE: RECOVERED VBS COURIER BODY CAMERA', 3.2);
+        } else if (it.type === 'sec_photo_samples') {
+          if (!this.holdAction) {
+            const photoDur = Number((2.0 * this._getSearchTimeScale()).toFixed(2));
+            this.holdAction = {
+              type: 'photograph',
+              x: it.x,
+              y: it.y,
+              elapsed: 0,
+              duration: photoDur,
+              maxDist: 82,
+              label: `HOLD [E] PHOTOGRAPH (${photoDur}s)`,
+              onComplete: () => {
+                it.collected = true;
+                if (this.level.secondaryObjectives) this.level.secondaryObjectives.samplePhotos = true;
+                if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+                if (this.sound) this.sound.playDecoyClatter();
+                if (this.hud) this.hud.showToast('SECONDARY OBJECTIVE: LAB SAMPLES PHOTOGRAPHED!', 3.2);
+              }
+            };
+          }
+          return;
+        } else if (it.type === 'sec_free_scientist') {
+          it.collected = true;
+          if (this.level.secondaryObjectives) this.level.secondaryObjectives.scientistFreed = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('SCIENTIST FREED: "WARD PATROLS THE BLAST GATE; DRONE SWEEPS THE NORTH YARD!"', 4.0);
+        } else if (it.type === 'sec_gps_truck') {
+          it.collected = true;
+          if (this.level.secondaryObjectives) this.level.secondaryObjectives.gpsPlanted = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast("SECONDARY OBJECTIVE: GPS TRACKER PLANTED ON WARD'S RADIO TRUCK!", 3.2);
+        } else if (it.type === 'side_footlocker') {
+          it.collected = true;
+          p.inventory.jungleStew += 1;
+          p.inventory.bandage = (p.inventory.bandage || 0) + 1;
+          p.inventory.energyGel = (p.inventory.energyGel || 0) + 1;
+          p.ammo.pistol += 4;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('FOOTLOCKER SALVAGED: +1 MRE, +1 BANDAGE, +1 ENERGY GEL, +4 9MM', 3.2);
+        } else if (it.type === 'side_ammo_can') {
+          it.collected = true;
+          p.ammo.crossbow += 2;
+          p.ammo.pistol += 4;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('AMMO CAN SALVAGED: +2 CARBON BOLTS, +4 9MM ROUNDS', 3.0);
+        } else if (it.type === 'side_med_case') {
+          it.collected = true;
+          p.inventory.medkit += 1;
+          p.inventory.bandage = (p.inventory.bandage || 0) + 1;
+          p.inventory.tourniquet = (p.inventory.tourniquet || 0) + 1;
+          p.inventory.purificationTabs = (p.inventory.purificationTabs || 0) + 2;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('MEDICAL CASE SALVAGED: +1 MEDKIT, +1 BANDAGE, +1 TOURNIQUET, +2 PURIF. TABS', 3.2);
+        } else if (it.type === 'side_cold_storage') {
+          it.collected = true;
+          p.inventory.medkit += 1;
+          p.inventory.sporeInjector = (p.inventory.sporeInjector || 0) + 1;
+          p.inventory.filterCartridge = (p.inventory.filterCartridge || 0) + 1;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('COLD-STORAGE SALVAGED: +1 MEDKIT, +1 SPORE AUTO-INJECTOR, +1 FILTER CARTRIDGE', 3.4);
+        } else if (it.type === 'side_guard_tower') {
+          it.collected = true;
+          p.inventory.scrapWire += 2;
+          p.inventory.radioParts = (p.inventory.radioParts || 0) + 2;
+          p.inventory.battery = (p.inventory.battery || 0) + 1;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('GUARD TOWER SALVAGED: +2 RADIO PARTS, +1 BATTERY & SCRAP WIRE', 3.2);
+        } else if (it.type === 'filter_mask') {
+          it.collected = true;
+          p.inventory.filterMask = true;
+          p.filterCartridgeTimer = 90;
+          p.filterMaskOn = true;
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('RESPIRATOR FILTER MASK EQUIPPED (90s CARTRIDGE) — PRESS [R] TO TOGGLE', 3.4);
+        } else if (it.type === 'salvage_can_pebbles') {
+          it.collected = true;
+          p.inventory.emptyCan = (p.inventory.emptyCan || 0) + 1;
+          p.inventory.pebbles = (p.inventory.pebbles || 0) + 1;
+          if (this.hud) this.hud.showToast('SALVAGED EMPTY CAN & PEBBLES — IMPROVISE NOISEMAKER AT WORKBENCH', 3.0);
+        } else if (it.type === 'salvage_diesel_rag') {
+          it.collected = true;
+          p.inventory.diesel = (p.inventory.diesel || 0) + 1;
+          p.inventory.rag = (p.inventory.rag || 0) + 1;
+          if (this.hud) this.hud.showToast('SALVAGED DIESEL FUEL & RAG — IMPROVISE SMOKE RAG AT WORKBENCH', 3.0);
+        } else if (it.type === 'salvage_flare') {
+          it.collected = true;
+          p.inventory.flare = (p.inventory.flare || 0) + 1;
+          p.inventory.scrapWire = (p.inventory.scrapWire || 0) + 1;
+          if (this.hud) this.hud.showToast('SALVAGED ROAD FLARE & WIRE — IMPROVISE TRIPWIRE FLARE AT WORKBENCH', 3.0);
+        } else if (it.type === 'salvage_radio_parts') {
+          it.collected = true;
+          p.inventory.radioParts = (p.inventory.radioParts || 0) + 2;
+          p.inventory.battery = (p.inventory.battery || 0) + 1;
+          if (this.hud) this.hud.showToast('SALVAGED RADIO PARTS (x2) & BATTERY — IMPROVISE RADIO JAMMER AT WORKBENCH', 3.0);
         } else if (it.type === 'encrypted_drive') {
           it.collected = true;
           p.inventory.encryptedDrives++;
-          if (this.hud) this.hud.showToast('RECOVERED VBS ENCRYPTED DRIVE — DECRYPT AT BIVOUAC [B]', 3.0);
-        } else if (it.type === 'keycard') {
-          it.collected = true;
-          p.inventory.hasKeycard = true;
-          if (this.hud) this.hud.showToast('ACQUIRED TIER-1 SECURITY KEYCARD', 3.0);
+          if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+          if (this.hud) this.hud.showToast('RECOVERED VBS ENCRYPTED DRIVE — DECRYPT AT A FIELD CACHE', 3.0);
         } else if (it.type === 'dirty_water') {
           it.collected = true;
           p.inventory.dirtyWater++;
@@ -1239,15 +2096,15 @@
         } else if (it.type === 'scrap_wire') {
           it.collected = true;
           p.inventory.scrapWire += 2;
-          if (this.hud) this.hud.showToast('SCAVENGED SCRAP WIRE (+2)', 2.0);
+          if (this.hud) this.hud.showToast('SALVAGED SCRAP WIRE (+2)', 2.0);
         } else if (it.type === 'decoy_rocks') {
           it.collected = true;
           p.ammo.decoy += 5;
-          if (this.hud) this.hud.showToast('COLLECTED DECOY ROCKS (+5) — PRESS [4] TO LURE BOARS', 2.8);
+          if (this.hud) this.hud.showToast('COLLECTED NOISEMAKERS (+5) — PRESS [4] TO LURE BOARS', 2.8);
         } else if (it.type === 'bolt_pickup') {
           it.collected = true;
           p.ammo.crossbow += 1;
-          if (this.hud) this.hud.showToast('RETRIEVED CROSSBOW BOLT (+1)', 1.5);
+          if (this.hud) this.hud.showToast('RECOVERED CARBON BOLT (+1)', 1.5);
         } else if (it.type === 'generator') {
           it.collected = true;
           this.level.generatorSabotaged = true;
@@ -1257,18 +2114,17 @@
           this._emitAcousticRing(it.x, it.y, 290, false);
           if (this.hud) this.hud.showToast('GENERATOR SABOTAGED — OUTPOST FLOODLIGHTS DARK!', 3.2);
         } else if (it.type === 'culvert_unlock') {
-          if (!p.inventory.hasKeycard) {
-            if (this.hud) this.hud.showToast('REQUIRES TIER-1 SECURITY KEYCARD FROM SECTOR 2', 2.5);
+          if (!this.level.culvertDrained && !p.inventory.hasKeycard) {
+            if (this.hud) this.hud.showToast('CULVERT FLOODED — POWER SECTOR 3 PUMP STATION FIRST', 2.8);
             return;
           }
           it.collected = true;
           this.level.culvertUnlocked = true;
-          const grate = this.level.obstacles.find((o) => o.id === 'culvert_grate');
-          if (grate) grate.unlocked = true;
-          if (this.hud) this.hud.showToast('DRAINAGE CULVERT UNLOCKED — STEALTH BYPASS OPEN!', 3.0);
+          openGateById('culvert_grate');
+          if (this.hud) this.hud.showToast('DRAINAGE CULVERT OPEN — STEALTH BYPASS CLEAR!', 3.0);
         } else if (it.type === 'blast_terminal') {
           if (!p.inventory.hasKeycard) {
-            if (this.hud) this.hud.showToast('ACCESS DENIED — ACQUIRE TIER-1 KEYCARD FIRST!', 2.6);
+            if (this.hud) this.hud.showToast('ACCESS DENIED — GET TIER-1 KEYCARD (LAB SAFE 4719 OR CMDR WARD)', 3.2);
             return;
           }
           it.collected = true;
@@ -1295,19 +2151,36 @@
       this.diegeticBadge = null;
       if (!p || !this.level) return;
 
+      if (p.draggingBody) {
+        this.interactHint = '[E / TAP] DROP BODY';
+        this.diegeticBadge = { x: p.centerX, y: p.y - 4, text: '[E] DROP BODY', urgent: false };
+        return;
+      }
+
       for (let i = 0; i < this.mercenaries.length; i++) {
         const m = this.mercenaries[i];
         if (!m.dead && m.state !== 'ALERT' && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 78 && m.isBehindMe(p.centerX, p.centerY)) {
-          this.interactHint = '[E / TAP] SILENT TAKEDOWN';
-          this.diegeticBadge = { x: m.centerX, y: m.y, text: '[E / TAP] SILENT TAKEDOWN', urgent: true };
+          const sec = this._getTakedownDuration().toFixed(2).replace(/0$/, '');
+          this.interactHint = `HOLD [E] SILENT TAKEDOWN (${sec}s)`;
+          this.diegeticBadge = { x: m.centerX, y: m.y, text: `HOLD [E] TAKEDOWN (${sec}s)`, urgent: true };
+          return;
+        }
+        if (m.dead && m.role === 'commander' && !m.bodySearched && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 85) {
+          this.interactHint = '[E / TAP] SEARCH CMDR WARD (TIER-1 KEYCARD)';
+          this.diegeticBadge = { x: m.centerX, y: m.y, text: '[E] SEARCH CMDR WARD', urgent: true };
+          return;
+        }
+        if (m.dead && p.getProficiencyRank && p.getProficiencyRank('closeQuarters') >= 2 && Math.hypot(m.centerX - p.centerX, m.centerY - p.centerY) <= 85) {
+          this.interactHint = '[E / TAP] DRAG BODY SILENTLY';
+          this.diegeticBadge = { x: m.centerX, y: m.y, text: '[E] DRAG BODY', urgent: false };
           return;
         }
       }
       for (let i = 0; i < this.boars.length; i++) {
         const b = this.boars[i];
         if (b.dead && !b.meatHarvested && Math.hypot(b.centerX - p.centerX, b.centerY - p.centerY) <= 85) {
-          this.interactHint = '[E / TAP] HARVEST BOAR MEAT';
-          this.diegeticBadge = { x: b.centerX, y: b.y, text: '[E / TAP] HARVEST BOAR MEAT', urgent: false };
+          this.interactHint = '[E / TAP] TAKE BOAR MEAT';
+          this.diegeticBadge = { x: b.centerX, y: b.y, text: '[E / TAP] TAKE BOAR MEAT', urgent: false };
           return;
         }
       }
@@ -1323,6 +2196,14 @@
           this.diegeticBadge = { x: it.x, y: it.y, text: label, urgent: !!it.highlight };
           return;
         }
+      }
+      // Task 6c: Basha Site Hold-E prompt
+      const basha = this._getNearbyBashaSite(95);
+      if (basha) {
+        const blocked = this.inCombat || this._hasAlertGuard();
+        const label = blocked ? 'FIELD CACHE BLOCKED (GUARD ALERT)' : `HOLD [E] ${basha.label.toUpperCase()}`;
+        this.interactHint = label;
+        this.diegeticBadge = { x: basha.x, y: basha.y - 8, text: label, urgent: blocked };
       }
     }
 
@@ -1360,8 +2241,15 @@
             const m = this.mercenaries[j];
             if (m.dead) continue;
             if (Math.hypot(pr.x - m.centerX, pr.y - (m.y + m.height * 0.5)) < 26) {
-              const dealt = m.takeDamage(pr.damage, { x: this.player.centerX, y: this.player.centerY }, aiEvents);
-              this._spawnFloat(m.centerX, m.y - 14, String(dealt), '#F85A5A', true);
+              // Task 9 + Task 7: Headshot zone (Rank 1 Marksmanship stabilizes aim / widens head zone to 0.44)
+              const headRatio = (this.player.getProficiencyRank && this.player.getProficiencyRank('marksmanship') >= 1) ? 0.44 : 0.36;
+              const isHeadshot = (pr.type === 'pistol9mm' || pr.type === 'bolt') && pr.y <= m.y + m.height * headRatio;
+              const hitDmg = isHeadshot ? Math.round(pr.damage * 1.35) : pr.damage;
+              const dealt = m.takeDamage(hitDmg, { x: this.player.centerX, y: this.player.centerY }, aiEvents);
+              this._spawnFloat(m.centerX, m.y - 14, isHeadshot ? `HEADSHOT ${dealt}` : String(dealt), '#F85A5A', true);
+              if (isHeadshot) {
+                this._recordProficiencyAction('marksmanship', 1);
+              }
               if (pr.retrievable && this.sound) this.sound.playBoltThud();
               if (m.dead) this.triggerHitStop(35);
               if (pr.retrievable) {
@@ -1371,7 +2259,7 @@
                   x: m.centerX,
                   y: m.centerY,
                   badge: 'BLT',
-                  label: 'Crossbow Bolt',
+                  label: 'Carbon Bolt',
                   collected: false
                 });
               }
@@ -1399,6 +2287,11 @@
               this._vibrate([40, 60]);
               if (this.camera) this.camera.addTrauma(0.55, pr.vx, pr.vy);
               this._spawnFloat(this.player.centerX, this.player.y - 12, `-${dealt} HP`, '#F85A5A', true);
+              // Task 6b: Bullet hit has 60% bleeding chance
+              if (!this.player.dead && Math.random() < 0.6) {
+                this.player.bleeding = true;
+                if (this.hud) this.hud.showToast('BULLET WOUND BLEEDING — PRESS [H] TO BANDAGE OR [Y] FOR TOURNIQUET!', 3.0);
+              }
             }
             pr.dead = true;
           } else {
@@ -1428,6 +2321,11 @@
           this.currentSectorLabel = s.label;
           if (s.id !== this.currentSectorId) {
             this.currentSectorId = s.id;
+            if (!this._crossedSectors) this._crossedSectors = new Set([1]);
+            if (!this._crossedSectors.has(s.id)) {
+              this._crossedSectors.add(s.id);
+              if (!this.inCombat) this._recordProficiencyAction('fieldcraft', 1);
+            }
             if (s.id > this.highestSavedSector) {
               this.highestSavedSector = s.id;
               this._saveSectorCheckpoint(s.id, false);
@@ -1437,6 +2335,16 @@
         }
       }
 
+      // Task 6b: Filter Mask 90s cartridge drain while worn
+      if (p.filterMaskOn) {
+        p.filterCartridgeTimer = Math.max(0, (p.filterCartridgeTimer || 0) - dt);
+        if (p.filterCartridgeTimer <= 0) {
+          p.filterMaskOn = false;
+          if (this.hud) this.hud.showToast('FILTER CARTRIDGE DEPLETED — SPORE PROTECTION LOST!', 2.8);
+        }
+      }
+
+      // Task 6b: Spore Exposure Meter (blocked while filter mask has cartridge; at 100 -> blurred vision & 1 HP / 4s)
       let inSpore = false;
       for (let i = 0; i < l.sporeZones.length; i++) {
         const sp = l.sporeZones[i];
@@ -1446,17 +2354,46 @@
         }
       }
       if (inSpore) {
-        p.sporeTickTimer += dt;
-        if (p.sporeTickTimer >= 1.25) {
-          p.sporeTickTimer = 0;
-          const dealt = p.takeDamage(1);
-          if (dealt > 0) {
-            this._vibrate([40, 60]);
-            this._spawnFloat(p.centerX, p.y - 12, 'BT-09 SPORE -1', '#F85A5A', false);
+        const protectedByMask = !!(p.filterMaskOn && p.filterCartridgeTimer > 0);
+        if (!protectedByMask) {
+          p.sporeExposure = Math.min(100, (p.sporeExposure || 0) + 12.5 * dt);
+          if (p.sporeExposure >= 100) {
+            p.sporeHpTimer = (p.sporeHpTimer || 0) + dt;
+            if (p.sporeHpTimer >= 4.0) {
+              p.sporeHpTimer -= 4.0;
+              const dealt = p.takeDamage(1);
+              if (dealt > 0) {
+                this._vibrate([40, 60]);
+                this._spawnFloat(p.centerX, p.y - 12, 'BT-09 SPORES -1 HP', '#F85A5A', true);
+              }
+            }
           }
         }
       } else {
-        p.sporeTickTimer = 0;
+        p.sporeHpTimer = 0;
+        if ((p.sporeExposure || 0) > 0) {
+          p.sporeExposure = Math.max(0, p.sporeExposure - 3.0 * dt);
+        }
+      }
+
+      // Task 6b: Leeches when wading in deep water or flooded culvert for > 4 s (-10% max stamina each, up to 3)
+      const inRiverEdge = this.currentSectorId === 1 && p.centerX < 210;
+      const cz = l.culvertZone;
+      const inFloodedCulvert = !!(
+        cz && !l.culvertDrained &&
+        p.centerX >= cz.x && p.centerX <= cz.x + cz.width &&
+        p.centerY >= cz.y && p.centerY <= cz.y + cz.height
+      );
+      if (inRiverEdge || inFloodedCulvert) {
+        p.wadeTimer = (p.wadeTimer || 0) + dt;
+        if (p.wadeTimer >= 4.0 && (p.leeches || 0) < 3) {
+          p.wadeTimer = 0;
+          p.leeches = (p.leeches || 0) + 1;
+          this._spawnFloat(p.centerX, p.y - 14, `LEECH x${p.leeches} (-10% STA)`, '#F85A5A', false);
+          if (this.hud) this.hud.showToast('LEECH ATTACHED (-10% MAX STAMINA) — REMOVE AT A FIELD CACHE', 2.6);
+        }
+      } else {
+        p.wadeTimer = Math.max(0, (p.wadeTimer || 0) - dt * 0.5);
       }
 
       for (let i = 0; i < l.tripwires.length; i++) {
