@@ -35,6 +35,7 @@ function runQC() {
     'assets/sprites/kancil_walk_8f.png', 'assets/sprites/kancil_stealth_8f.png',
     'assets/sprites/kancil_parang_8f.png', 'assets/sprites/boar_charge_8f.png',
     'assets/sprites/boar_idle_8f.png', 'assets/sprites/merc_patrol_8f.png',
+    'assets/sprites/merc_patrol_up_8f.png', 'assets/sprites/merc_patrol_down_8f.png',
     'assets/sprites/merc_fire_8f.png',
     'assets/environment/rainforest_tileset.png', 'assets/environment/paper_bg.png',
     'assets/environment/hollow_log.png', 'assets/environment/fern_clump.png',
@@ -65,7 +66,11 @@ function runQC() {
   });
 
   // 4. Verify 8 sliced frames exist for every 2x4 sprite sheet
-  const prefixes = ['kancil_walk', 'kancil_stealth', 'kancil_parang', 'boar_charge', 'boar_idle', 'merc_patrol', 'merc_fire'];
+  const prefixes = [
+    'kancil_walk', 'kancil_stealth', 'kancil_parang',
+    'boar_charge', 'boar_idle',
+    'merc_patrol', 'merc_patrol_up', 'merc_patrol_down', 'merc_fire'
+  ];
   prefixes.forEach((pfx) => {
     let allEight = true;
     for (let i = 0; i < 8; i++) {

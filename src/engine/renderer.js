@@ -435,7 +435,97 @@
       ctx.restore();
     }
 
+    _seededWave(v, seed) {
+      return (
+        Math.sin(v * 0.0072 + seed * 1.7) * 15 +
+        Math.sin(v * 0.0195 + seed * 3.1) * 7.5 +
+        Math.cos(v * 0.041 + seed * 0.9) * 3.2
+      );
+    }
+
+    _ensureTerrainGeometry(level) {
+      if (this._terrainCache && this._terrainCache.levelRef === level) {
+        return this._terrainCache;
+      }
+      const cache = { levelRef: level, riverBank: [], trailTop: [], trailBot: [], trailHatches: [] };
+
+      // 1. Irregular hand-inked Sungai Belum riverbank (fixed seed, zero shimmer)
+      if (level.riverZone) {
+        const rz = level.riverZone;
+        const step = 28;
+        for (let y = rz.y; y <= rz.y + rz.height; y += step) {
+          const offset =
+            Math.sin(y * 0.0085 + 0.7) * 15 +
+            Math.sin(y * 0.024 + 2.1) * 7 +
+            Math.cos(y * 0.052 + 0.4) * 2.5;
+          cache.riverBank.push({ x: rz.x + rz.width + offset, y });
+        }
+        if (cache.riverBank[cache.riverBank.length - 1].y < rz.y + rz.height) {
+          cache.riverBank.push({ x: rz.x + rz.width + 4, y: rz.y + rz.height });
+        }
+      }
+
+      // 2. Connected winding diagonal trail spanning all path bands smoothly
+      if (Array.isArray(level.paths) && level.paths.length > 0) {
+        const paths = level.paths;
+        const minX = paths[0].x;
+        const lastP = paths[paths.length - 1];
+        const maxX = lastP.x + lastP.width;
+        const step = 36;
+
+        // Smoothly interpolate top & bottom Y across sector path bands with diagonal transitions
+        const sampleBand = (x) => {
+          let idx = 0;
+          for (let i = 0; i < paths.length; i++) {
+            if (x >= paths[i].x) idx = i;
+          }
+          const cur = paths[idx];
+          const next = paths[Math.min(paths.length - 1, idx + 1)];
+          const blendZone = 240;
+          let t = 0;
+          const distToEnd = (cur.x + cur.width) - x;
+          if (idx < paths.length - 1 && distToEnd < blendZone) {
+            const u = Math.max(0, Math.min(1, 1 - distToEnd / blendZone));
+            t = u * u * (3 - 2 * u); // smoothstep diagonal join
+          }
+          const baseTop = cur.y * (1 - t) + next.y * t;
+          const baseBot = (cur.y + cur.height) * (1 - t) + (next.y + next.height) * t;
+          // Gentle diagonal macro-meander across the rainforest
+          const slant = Math.sin(x * 0.0024 + 0.45) * 28;
+          return {
+            top: baseTop + slant + this._seededWave(x, 1.3),
+            bot: baseBot + slant + this._seededWave(x, 4.7)
+          };
+        };
+
+        for (let x = minX; x <= maxX; x += step) {
+          const b = sampleBand(x);
+          cache.trailTop.push({ x, y: b.top });
+          cache.trailBot.push({ x, y: b.bot });
+        }
+        if (cache.trailTop[cache.trailTop.length - 1].x < maxX) {
+          const b = sampleBand(maxX);
+          cache.trailTop.push({ x: maxX, y: b.top });
+          cache.trailBot.push({ x: maxX, y: b.bot });
+        }
+
+        // Precompute subtle dip-pen hatching ticks along top & bottom trail edges
+        for (let i = 0; i < cache.trailTop.length; i++) {
+          const pt = cache.trailTop[i];
+          const pb = cache.trailBot[i];
+          const lenT = 6 + ((i * 7) % 6);
+          const lenB = 6 + ((i * 11) % 6);
+          cache.trailHatches.push({ x1: pt.x, y1: pt.y, x2: pt.x - 5, y2: pt.y - lenT });
+          cache.trailHatches.push({ x1: pb.x, y1: pb.y, x2: pb.x + 5, y2: pb.y + lenB });
+        }
+      }
+
+      this._terrainCache = cache;
+      return cache;
+    }
+
     _drawTerrain(ctx, level, cam) {
+      const geom = this._ensureTerrainGeometry(level);
       const sectors = level.sectors || [];
       for (let i = 0; i < sectors.length; i++) {
         const s = sectors[i];
@@ -445,9 +535,9 @@
         ctx.fillStyle = s.groundTint || PALETTE.paperWarm;
         ctx.fillRect(s.x, s.y, s.width, s.height);
 
-        ctx.strokeStyle = 'rgba(17, 30, 51, 0.18)';
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.14)';
         ctx.setLineDash([8, 6]);
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1.4;
         ctx.strokeRect(s.x, s.y, s.width, s.height);
         ctx.setLineDash([]);
 
@@ -457,44 +547,119 @@
         ctx.restore();
       }
 
-      if (level.riverZone) {
+      // Phase C: Winding diagonal jungle trail polygon with 1.8px dip-pen ink banks & light hatching
+      if (geom.trailTop.length > 1) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(geom.trailTop[0].x, geom.trailTop[0].y);
+        for (let i = 1; i < geom.trailTop.length; i++) {
+          ctx.lineTo(geom.trailTop[i].x, geom.trailTop[i].y);
+        }
+        for (let i = geom.trailBot.length - 1; i >= 0; i--) {
+          ctx.lineTo(geom.trailBot[i].x, geom.trailBot[i].y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(208, 192, 160, 0.42)';
+        ctx.fill();
+
+        // Subtle inner wagon-rut / foot-track contour lines
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.12)';
+        ctx.lineWidth = 1.1;
+        ctx.setLineDash([12, 10]);
+        ctx.beginPath();
+        for (let i = 0; i < geom.trailTop.length; i++) {
+          const midY = geom.trailTop[i].y * 0.62 + geom.trailBot[i].y * 0.38;
+          if (i === 0) ctx.moveTo(geom.trailTop[i].x, midY);
+          else ctx.lineTo(geom.trailTop[i].x, midY);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Hand-inked top and bottom trail borders (1.8px Prussian Blue)
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.56)';
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(geom.trailTop[0].x, geom.trailTop[0].y);
+        for (let i = 1; i < geom.trailTop.length; i++) {
+          ctx.lineTo(geom.trailTop[i].x, geom.trailTop[i].y);
+        }
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(geom.trailBot[0].x, geom.trailBot[0].y);
+        for (let i = 1; i < geom.trailBot.length; i++) {
+          ctx.lineTo(geom.trailBot[i].x, geom.trailBot[i].y);
+        }
+        ctx.stroke();
+
+        // Light diagonal edge hatching along trail banks
+        ctx.strokeStyle = 'rgba(17, 30, 51, 0.28)';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        for (let i = 0; i < geom.trailHatches.length; i++) {
+          const h = geom.trailHatches[i];
+          ctx.moveTo(h.x1, h.y1);
+          ctx.lineTo(h.x2, h.y2);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Phase C: Organic hand-inked Sungai Belum riverbank with irregular edge & bank hatching
+      if (level.riverZone && geom.riverBank.length > 1) {
         const rz = level.riverZone;
-        if (this._isVisible(rz.x, rz.y, rz.width, rz.height, cam)) {
+        if (this._isVisible(rz.x, rz.y, rz.width + 40, rz.height, cam)) {
           ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(rz.x, rz.y);
+          for (let i = 0; i < geom.riverBank.length; i++) {
+            ctx.lineTo(geom.riverBank[i].x, geom.riverBank[i].y);
+          }
+          ctx.lineTo(rz.x, rz.y + rz.height);
+          ctx.closePath();
           ctx.fillStyle = PALETTE.waterTint;
-          ctx.fillRect(rz.x, rz.y, rz.width, rz.height);
+          ctx.fill();
+
+          // Clip animated water ripples cleanly inside organic bank silhouette
+          ctx.save();
+          ctx.clip();
           ctx.strokeStyle = 'rgba(17, 30, 51, 0.34)';
           ctx.lineWidth = 1.4;
           for (let y = rz.y + 20; y < rz.y + rz.height; y += 34) {
             const wave = Math.sin(this.time * 2.2 + y * 0.04) * 9;
             ctx.beginPath();
-            ctx.moveTo(rz.x + 14, y);
-            ctx.quadraticCurveTo(rz.x + rz.width * 0.5 + wave, y + 8, rz.x + rz.width - 12, y - 3);
+            ctx.moveTo(rz.x + 12, y);
+            ctx.quadraticCurveTo(rz.x + rz.width * 0.5 + wave, y + 8, rz.x + rz.width + 6, y - 3);
             ctx.stroke();
           }
-          ctx.strokeStyle = PALETTE.inkMid;
-          ctx.lineWidth = 2.5;
+          ctx.restore();
+
+          // Crisp 2.2px irregular hand-inked bank line
+          ctx.strokeStyle = PALETTE.inkDeep;
+          ctx.lineWidth = 2.2;
+          ctx.lineJoin = 'round';
           ctx.beginPath();
-          ctx.moveTo(rz.x + rz.width, rz.y);
-          ctx.lineTo(rz.x + rz.width, rz.y + rz.height);
+          ctx.moveTo(geom.riverBank[0].x, geom.riverBank[0].y);
+          for (let i = 1; i < geom.riverBank.length; i++) {
+            ctx.lineTo(geom.riverBank[i].x, geom.riverBank[i].y);
+          }
+          ctx.stroke();
+
+          // Bank-side dip-pen mud hatching along dry edge
+          ctx.strokeStyle = 'rgba(17, 30, 51, 0.34)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          for (let i = 0; i < geom.riverBank.length; i++) {
+            const pt = geom.riverBank[i];
+            const len = 8 + ((i * 5) % 6);
+            ctx.moveTo(pt.x, pt.y);
+            ctx.lineTo(pt.x + len, pt.y + 5);
+          }
           ctx.stroke();
           ctx.restore();
         }
-      }
-
-      if (Array.isArray(level.paths)) {
-        ctx.save();
-        for (let i = 0; i < level.paths.length; i++) {
-          const p = level.paths[i];
-          ctx.fillStyle = p.fill || 'rgba(205, 190, 158, 0.42)';
-          ctx.fillRect(p.x, p.y, p.width, p.height);
-          ctx.strokeStyle = 'rgba(17, 30, 51, 0.22)';
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([6, 8]);
-          ctx.strokeRect(p.x, p.y, p.width, p.height);
-        }
-        ctx.setLineDash([]);
-        ctx.restore();
       }
 
       if (level.culvertZone) {

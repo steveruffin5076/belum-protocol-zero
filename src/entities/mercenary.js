@@ -92,9 +92,15 @@
       this.firingAnimTimer = 0;
       this.bulletDamage = this.role === 'commander' ? 4 : 3;
 
-      // 8-frame animators
+      // 8-frame animators (Phase B3: side + up/down directional sheets with graceful fallback)
       this.animPatrol = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol' }) : null;
+      this.animPatrolUp = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol_up' }) : null;
+      this.animPatrolDown = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol_down' }) : null;
       this.animFire = Animator ? new Animator({ fps: 12, framePrefix: 'merc_fire' }) : null;
+      this.animFireUp = null;
+      this.animFireDown = null;
+      this.spriteDir = 'side';
+      this._updateSpriteDir();
     }
 
     get centerX() {
@@ -109,6 +115,21 @@
       return this.y + this.height;
     }
 
+    _updateSpriteDir() {
+      const s = Math.sin(Number.isFinite(this.facingAngle) ? this.facingAngle : 0);
+      if (this.spriteDir === 'side') {
+        if (s < -0.65) this.spriteDir = 'up';
+        else if (s > 0.65) this.spriteDir = 'down';
+      } else if (this.spriteDir === 'up') {
+        if (s > 0.65) this.spriteDir = 'down';
+        else if (s > -0.55) this.spriteDir = 'side';
+      } else if (this.spriteDir === 'down') {
+        if (s < -0.65) this.spriteDir = 'up';
+        else if (s < 0.55) this.spriteDir = 'side';
+      }
+      return this.spriteDir;
+    }
+
     _rotateToward(desiredAngle, dt) {
       this.targetFacingAngle = desiredAngle;
       const diff = normalizeAngle(desiredAngle - this.facingAngle);
@@ -119,6 +140,7 @@
         this.facingAngle = normalizeAngle(this.facingAngle + Math.sign(diff) * maxStep);
       }
       this.facingRight = Math.cos(this.facingAngle) >= 0;
+      this._updateSpriteDir();
     }
 
     isBehindMe(px, py) {
@@ -351,10 +373,15 @@
         }
       }
 
-      if (this.firingAnimTimer > 0 && this.animFire) {
-        this.animFire.update(safeDt, true);
-      } else if (this.animPatrol) {
-        this.animPatrol.update(safeDt, isMoving);
+      this._updateSpriteDir();
+      if (this.firingAnimTimer > 0) {
+        if (this.spriteDir === 'up' && this.animFireUp) this.animFireUp.update(safeDt, true);
+        else if (this.spriteDir === 'down' && this.animFireDown) this.animFireDown.update(safeDt, true);
+        else if (this.animFire) this.animFire.update(safeDt, true);
+      } else {
+        if (this.animPatrol) this.animPatrol.update(safeDt, isMoving);
+        if (this.animPatrolUp) this.animPatrolUp.update(safeDt, isMoving);
+        if (this.animPatrolDown) this.animPatrolDown.update(safeDt, isMoving);
       }
     }
 
@@ -432,8 +459,34 @@
       ctx.restore();
     }
 
+    _drawFacingChevron(ctx) {
+      const ox = this.centerX;
+      const oy = this.y + this.height - 4;
+      const ang = Number.isFinite(this.facingAngle) ? this.facingAngle : 0;
+      const cx = ox + Math.cos(ang) * 26;
+      const cy = oy + Math.sin(ang) * 26 * 0.4;
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(ang);
+      ctx.strokeStyle = (this.state === 'SUSPICIOUS' || this.state === 'ALERT')
+        ? '#F85A5A'
+        : 'rgba(17, 30, 51, 0.75)';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      // 10px long x 8px wide hand-drawn ink chevron pointing along facingAngle
+      ctx.beginPath();
+      ctx.moveTo(-5, -4);
+      ctx.lineTo(5, 0);
+      ctx.lineTo(-5, 4);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     draw(ctx) {
       if (!ctx) return;
+      this._updateSpriteDir();
       ctx.save();
       if (this.dead) {
         ctx.globalAlpha = 0.34;
@@ -443,6 +496,11 @@
       ctx.beginPath();
       ctx.ellipse(this.centerX, this.y + this.height - 4, 21, 8, 0, 0, Math.PI * 2);
       ctx.fill();
+
+      // Phase A1: Ground-projected facing chevron under feet (hidden when dead)
+      if (!this.dead) {
+        this._drawFacingChevron(ctx);
+      }
 
       const drawW = this.role === 'commander' ? 96 : 84;
       const drawH = this.role === 'commander' ? 96 : 84;
@@ -460,10 +518,22 @@
         ctx.lineTo(this.centerX - 14, this.y + this.height - 2);
         ctx.stroke();
         drawn = true;
-      } else if (this.firingAnimTimer > 0 && this.animFire && this.animFire.isReady()) {
-        drawn = this.animFire.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
-      } else if (this.animPatrol && this.animPatrol.isReady()) {
-        drawn = this.animPatrol.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
+      } else if (this.firingAnimTimer > 0) {
+        if (this.spriteDir === 'up' && this.animFireUp && this.animFireUp.isReady()) {
+          drawn = this.animFireUp.draw(ctx, drawX, drawY, drawW, drawH, false);
+        } else if (this.spriteDir === 'down' && this.animFireDown && this.animFireDown.isReady()) {
+          drawn = this.animFireDown.draw(ctx, drawX, drawY, drawW, drawH, false);
+        } else if (this.animFire && this.animFire.isReady()) {
+          drawn = this.animFire.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
+        }
+      } else {
+        if (this.spriteDir === 'up' && this.animPatrolUp && this.animPatrolUp.isReady()) {
+          drawn = this.animPatrolUp.draw(ctx, drawX, drawY, drawW, drawH, false);
+        } else if (this.spriteDir === 'down' && this.animPatrolDown && this.animPatrolDown.isReady()) {
+          drawn = this.animPatrolDown.draw(ctx, drawX, drawY, drawW, drawH, false);
+        } else if (this.animPatrol && this.animPatrol.isReady()) {
+          drawn = this.animPatrol.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
+        }
       }
 
       if (!drawn) {
@@ -500,15 +570,26 @@
         }
       }
 
-      // AAA Gradual Ink-Eye Suspicion Indicator OR Alert "!"
+      // Phase A2: Priority "!" (ALERT) -> "?" (SUSPICIOUS) -> nothing (PATROL)
+      // When suspicion eye is also visible, offset "?" cleanly to the right of the eye so they never overlap
       if (!this.dead) {
         if (this.state === 'ALERT') {
           ctx.fillStyle = '#F85A5A';
           ctx.font = '900 22px "Georgia", serif';
           ctx.textAlign = 'center';
           ctx.fillText('!', this.centerX, this.y - 20);
-        } else if (this.suspicionMeter > 0.04) {
-          this._drawInkSuspicionEye(ctx);
+        } else {
+          const showEye = this.suspicionMeter > 0.04;
+          if (showEye) {
+            this._drawInkSuspicionEye(ctx);
+          }
+          if (this.state === 'SUSPICIOUS') {
+            ctx.fillStyle = '#111E33';
+            ctx.font = '900 22px "Georgia", serif';
+            ctx.textAlign = 'center';
+            const qx = showEye ? this.centerX + 24 : this.centerX;
+            ctx.fillText('?', qx, this.y - 20);
+          }
         }
       }
 
