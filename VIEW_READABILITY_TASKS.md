@@ -93,7 +93,7 @@ Reference sheets to attach to every prompt: `assets/sprites/merc_patrol_8f.png` 
 4. `merc_fire_down_8f.png`
    > [Shared style block] Subject: the same mercenary facing the viewer, braced and firing a 3-round burst TOWARD the viewer, with the rifle at the shoulder pointing slightly down-forward. Frames 1–2 raise the weapon, frames 3–6 show three recoil kicks with a small ink-hatched muzzle flash at the barrel (crimson tint only on the flash), and frames 7–8 recover. Same gear as the merc_fire_8f.png reference.
 
-**Optional sheets (player, Operator Kancil).** Make these only if the player should also turn. Use `kancil_walk_8f.png`, `kancil_stealth_8f.png` and `kancil_parang_8f.png` as references.
+**Optional sheets (player, Operator Kancil).** Make these only if the player should also turn. Do `PLAYER_ART_ANIMATION_TASKS.md` first. Use `kancil_walk_8f.png` as the identity reference for every player sheet. The current `kancil_stealth_8f.png` and `kancil_parang_8f.png` show a bare head and must not be used as references. Follow the "Canonical character look" section in `PLAYER_ART_ANIMATION_TASKS.md`: helmet and rucksack in every frame. For sheets 7 and 8 (stealth), draw a crouch-walk, not a kneel.
 
 5. `kancil_walk_up_8f.png`
    > [Shared style block] Subject: Operator Kancil, a lone tactical operator with a large rucksack and a steel parang machete held low in the right hand, walking AWAY from the viewer, seen from behind at a slight high 3/4 angle. An 8-frame walk cycle. No crimson. Same gear as the attached kancil_walk_8f.png reference.
