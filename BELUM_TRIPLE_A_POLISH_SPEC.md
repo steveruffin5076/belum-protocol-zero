@@ -2,6 +2,8 @@
 ## Triple-A Indie Polish, Game Juice & Quality Control Specification
 ### Autonomous Implementation Plan for Google Antigravity
 
+> **Status: COMPLETED** (`e6c41cb`) — All Tasks 1–4 (autoplay audio unlock, inertia/hit-stop/ink puddles/trauma, suspicion eye/footprints/foliage rustle/boar wall-stun, sector checkpoints & standalone bundle) implemented, verified, and merged on `main`.
+
 ---
 
 ### EXECUTIVE DIRECTIVE: ELEVATING TO "TRIPLE-A INDIE" QUALITY

@@ -1,5 +1,9 @@
 # Belum: Protocol Zero — Enemy Art and Animation Fix Tasks
 
+> **Status: PART A COMPLETED / PART B DEFERRED** (`b8084f4`)
+> - [x] **Part A (A1–A4, A7 — All Code & Slicer Fixes):** Burst-synced fire & aim-hold (`A1`), aspect-correct enemy & boar `drawH=102` sizing (`A2`), normalized `332×372` enemy frames with `0 px` baseline spread & matched `animFire` (`1.12x`) / `animPatrolUp` (`0.98x`) scales (`A3`), boar `animPaw` (`0–2`) vs. `animRun` (`3–7`) split (`A4`), Spotter binoculars & Commander Ward star (`A7`), and `tools/capture_enemy_strip.js` — **COMPLETED & VERIFIED**
+> - [ ] **Part A5/A6 & Part B (B1–B10 — New Sprite Sheets):** Deferred awaiting `gemini-3.1-flash-image` quota reset
+
 Task file for the implementing agent. It fixes the problems found in an audit of the guard (mercenary) and boar sprites and animation, captured from the running game after the View Readability work (commit `f48a097`). Part A needs only code. Part B needs new art. Do Part A first.
 
 ## Rules

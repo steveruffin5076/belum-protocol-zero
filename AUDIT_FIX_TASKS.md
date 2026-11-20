@@ -1,5 +1,13 @@
 # Belum: Protocol Zero — Audit Fix Tasks
 
+> **Status: COMPLETED** (`b8084f4`) — All fixes implemented, verified in headless Chromium (`npm run qc` 69/69, `npm run test:ai` 3/3, `tools/check_queued_input.js`, and full Fix 4–6.5 browser suite), and merged on `main`:
+> - [x] **Fix 1:** Queued input gated & cleared outside gameplay (`src/input/input_manager.js`, `src/main.js`, `tools/check_queued_input.js`)
+> - [x] **Fix 2:** Guard wall-sliding, sidestepping & stuck-waypoint recovery (`src/entities/mercenary.js`, `tools/ai_regression_checks.js`)
+> - [x] **Fix 3:** `±0.26` `facingRight` dead-band (`src/entities/mercenary.js`, `tools/ai_regression_checks.js`)
+> - [x] **Fix 4:** Versioned checkpoints (`version: 1`), world-state persistence, migration & error toasts (`src/main.js`, `src/world/level_act1.js`)
+> - [x] **Fix 5:** Boar `'FAUNA'` alerts separated from player `alertsTriggered` (`src/entities/mercenary.js`, `src/entities/boar.js`, `src/main.js`)
+> - [x] **Fix 6 & Approved Fix 6.5:** Screen shake (`0–100%`) & Reduce flashing accessibility settings (`belum_settings`) + quiet stealth takedowns (`0.2` trauma, no hit-stop) (`src/engine/camera.js`, `src/ui/hud.js`, `src/main.js`, `src/entities/*.js`)
+
 Task file for the implementing agent. These fixes come from an audit with the project skills `game-ai`, `game-feel`, `input-systems`, `level-design` and `save-systems`, found in `.claude/skills/`. Do the fixes in the order below. Each fix must pass its checks before the next one starts.
 
 ## Rules

@@ -2,6 +2,8 @@
 ## Master Triple-A Art, Environment, Architecture, Tools & Audio Foley Specification
 ### Autonomous Asset & Sound Pipeline for Google Antigravity
 
+> **Status: COMPLETED** (`d26ff97`) — All Tasks A–C (military bunker/outpost kit, biome extras, 8 `64×64` survival item icons, and multi-layer procedural Web Audio foley with dynamic tension ducking) implemented, verified, and merged on `main`.
+
 ---
 
 ### EXECUTIVE AESTHETIC DIRECTIVE

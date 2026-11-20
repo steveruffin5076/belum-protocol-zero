@@ -3,6 +3,8 @@
 ### Google Antigravity Autonomous Edition (2.5D Oblique / Isometric Tactical Stealth)
 ### With Mandatory Automated Quality Control (QC) & Bug-Fixing Loops
 
+> **Status: COMPLETED** — Act 1 vertical slice (4 continuous sectors, 2.5D oblique ink-on-parchment renderer, 8-frame sprite sheets, procedural Web Audio, Bivouac Camp, Prologue, QC suite, and offline single-file HTML/ZIP bundle) implemented and merged on `main`.
+
 ---
 
 ### EXECUTIVE SUMMARY

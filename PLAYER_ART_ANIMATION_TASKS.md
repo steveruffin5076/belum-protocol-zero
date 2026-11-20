@@ -1,5 +1,9 @@
 # Belum: Protocol Zero — Player Art and Animation Fix Tasks
 
+> **Status: PART A COMPLETED / PART B DEFERRED** (`b8084f4`)
+> - [x] **Part A (A1–A5 — All Code & Slicer Fixes):** Full 0.5 s 8-frame parang slash (`A1`), aspect-preserving bottom-pinned `SpriteAnimator` (`A2`), speed-synced walk/crouch FPS (`A3`), grid-free `332×372` slicer with `0 px` baseline spread & `tools/scan_frames.py` (`A4`), `scale: 1.06` slash height match (`A5`), and `tools/capture_player_strip.js` — **COMPLETED & VERIFIED**
+> - [ ] **Part B (B1–B6 — New Sprite Sheets):** Deferred awaiting `gemini-3.1-flash-image` quota reset
+
 Task file for the implementing agent. It fixes the problems found in an audit of Operator Kancil's sprites and animation. Part A needs only code. Part B needs new art. Do Part A first: it is useful on its own, and Part B depends on its slicing tool.
 
 ## Rules

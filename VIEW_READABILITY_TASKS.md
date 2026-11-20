@@ -1,5 +1,11 @@
 # Belum: Protocol Zero — View Readability Tasks
 
+> **Status: PARTIALLY COMPLETED** (`f48a097`)
+> - [x] **Phase A (A1–A2):** Ground facing chevron + `"?"` search indicator — **COMPLETED & VERIFIED**
+> - [x] **Phase B (Code + Merc Patrol Up/Down):** Directional sprite hysteresis (`0.65`/`0.55`) & fallback + `merc_patrol_up_8f.png` & `merc_patrol_down_8f.png` — **COMPLETED & VERIFIED**
+> - [ ] **Phase B (Remaining 8 Directional Sheets):** Deferred awaiting `gemini-3.1-flash-image` quota reset
+> - [x] **Phase C (C1–C2):** Winding diagonal trails & organic riverbank — **COMPLETED & VERIFIED**
+
 Task file for the implementing agent. Do the phases in order. Each phase must pass its checks before the next one starts.
 
 ## Context
