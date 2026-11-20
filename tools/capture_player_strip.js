@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tools/capture_player_strip.js - In-game player frame strip capture (PLAYER_ART_ANIMATION_TASKS Appendix B)
+// tools/capture_player_strip.js - In-game player frame strip capture (PLAYER_ART_ANIMATION_TASKS Appendix B + FOLLOWUP Fix 3)
 'use strict';
 
 const fs = require('fs');
@@ -8,22 +8,52 @@ const path = require('path');
 const out = process.argv[2] || '.';
 fs.mkdirSync(out, { recursive: true });
 
+// Open, unobstructed parchment spot near Sector 1 spawn (no pickups, ferns, or obstacles)
+const OPEN_SPOT = { x: 480, y: 1000 };
+
 async function runWithPlaywright() {
   const { chromium } = require('playwright');
   const b = await chromium.launch();
   const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
+  const errs = [];
+  p.on('pageerror', (e) => errs.push(e.message));
   await p.goto('http://localhost:3000/');
   await p.waitForTimeout(1200);
   await p.click('#btn-prologue-skip');
   await p.waitForTimeout(200);
   await p.click('text=BEGIN OPERATION');
   await p.waitForTimeout(1500);
+
+  // Fix 3: Freeze all enemies & prevent damage only inside the capture tool
+  const startHp = await p.evaluate(() => {
+    const g = window.belumGameInstance;
+    for (const m of g.mercenaries) m.update = () => {};
+    for (const bo of g.boars) bo.update = () => {};
+    g.projectiles.length = 0;
+    g.player.takeDamage = () => 0;
+    return g.player.hp;
+  });
+
+  const resetSpot = async () => {
+    await p.evaluate((spot) => {
+      const g = window.belumGameInstance;
+      const pl = g.player;
+      pl.x = spot.x;
+      pl.y = spot.y;
+      pl.vx = 0;
+      pl.vy = 0;
+      g.projectiles.length = 0;
+      g.camera.snapTo(pl.centerX, pl.centerY);
+    }, OPEN_SPOT);
+    await p.waitForTimeout(80);
+  };
+
   const clip = () => p.evaluate(() => {
     const g = window.belumGameInstance, pl = g.player, c = g.camera.getRenderOffset(), z = c.zoom || 1;
     const W = innerWidth, H = innerHeight;
     const sx = (pl.centerX - c.x - W / 2) * z + W / 2;
     const sy = (pl.y + pl.height - c.y - H / 2) * z + H / 2;
-    return { x: Math.round(sx - 70), y: Math.round(sy - 120), width: 140, height: 140 };
+    return { x: Math.max(0, Math.round(sx - 70)), y: Math.max(0, Math.round(sy - 120)), width: 140, height: 140 };
   });
   const shots = async (tag, n, gap) => {
     for (let i = 0; i < n; i++) {
@@ -31,17 +61,38 @@ async function runWithPlaywright() {
       await p.waitForTimeout(gap);
     }
   };
+
+  await resetSpot();
   await shots('idle', 4, 160);
-  await p.keyboard.down('KeyD'); await p.waitForTimeout(300); await shots('walkR', 8, 125); await p.keyboard.up('KeyD');
-  await p.keyboard.down('KeyA'); await p.waitForTimeout(300); await shots('walkL', 4, 125); await p.keyboard.up('KeyA');
-  await p.keyboard.down('ShiftLeft'); await p.keyboard.down('KeyD'); await p.waitForTimeout(300);
+
+  await resetSpot();
+  await p.keyboard.down('KeyD'); await p.waitForTimeout(250); await shots('walkR', 8, 125); await p.keyboard.up('KeyD');
+
+  await resetSpot();
+  await p.keyboard.down('KeyA'); await p.waitForTimeout(250); await shots('walkL', 4, 125); await p.keyboard.up('KeyA');
+
+  await resetSpot();
+  await p.keyboard.down('ShiftLeft'); await p.keyboard.down('KeyD'); await p.waitForTimeout(250);
   await shots('sprint', 8, 80);
   await p.keyboard.up('KeyD'); await p.keyboard.up('ShiftLeft');
-  await p.keyboard.press('KeyC'); await p.waitForTimeout(300);
-  await p.keyboard.down('KeyS'); await p.waitForTimeout(300); await shots('crouch', 8, 125); await p.keyboard.up('KeyS');
-  await p.keyboard.press('KeyC'); await p.waitForTimeout(300);
+
+  await resetSpot();
+  await p.keyboard.press('KeyC'); await p.waitForTimeout(200);
+  await p.keyboard.down('KeyD'); await p.waitForTimeout(200); await shots('crouch', 8, 125); await p.keyboard.up('KeyD');
+  await p.keyboard.press('KeyC'); await p.waitForTimeout(200);
+
+  await resetSpot();
   await p.keyboard.press('Space'); await shots('slash', 10, 55);
+
+  const endState = await p.evaluate(() => ({
+    mode: window.belumGameInstance.mode,
+    hp: window.belumGameInstance.player.hp
+  }));
+  console.log(JSON.stringify({ out, startHp, endState, errs }));
   await b.close();
+  if (endState.mode !== 'PLAYING' || endState.hp !== startHp || errs.length > 0) {
+    process.exit(1);
+  }
 }
 
 async function runWithCDP() {
@@ -102,6 +153,30 @@ async function runWithCDP() {
     await evalJS(`document.getElementById('btn-begin-operation')?.click();`);
     await sleep(1400);
 
+    // Fix 3: Freeze all enemies & prevent damage only inside the capture tool
+    const startHp = await evalJS(`(() => {
+      const g = window.belumGameInstance;
+      for (const m of g.mercenaries) m.update = () => {};
+      for (const bo of g.boars) bo.update = () => {};
+      g.projectiles.length = 0;
+      g.player.takeDamage = () => 0;
+      return g.player.hp;
+    })()`);
+
+    const resetSpot = async () => {
+      await evalJS(`(() => {
+        const g = window.belumGameInstance;
+        const pl = g.player;
+        pl.x = ${OPEN_SPOT.x};
+        pl.y = ${OPEN_SPOT.y};
+        pl.vx = 0;
+        pl.vy = 0;
+        g.projectiles.length = 0;
+        g.camera.snapTo(pl.centerX, pl.centerY);
+      })()`);
+      await sleep(80);
+    };
+
     const getClip = () => evalJS(`(() => {
       const g = window.belumGameInstance, pl = g.player, c = g.camera.getRenderOffset(), z = c.zoom || 1;
       const W = innerWidth, H = innerHeight;
@@ -119,17 +194,36 @@ async function runWithCDP() {
       }
     };
 
+    await resetSpot();
     await shots('idle', 4, 160);
+
+    await resetSpot();
     await keyDown('KeyD'); await sleep(220); await shots('walkR', 8, 110); await keyUp('KeyD');
-    await keyDown('KeyA'); await sleep(220); await shots('walkL', 6, 110); await keyUp('KeyA');
-    await keyDown('ShiftLeft'); await keyDown('KeyA'); await sleep(180);
-    await shots('sprint', 8, 70);
-    await keyUp('KeyA'); await keyUp('ShiftLeft');
-    await keyPress('KeyC'); await sleep(220);
+
+    await resetSpot();
+    await keyDown('KeyA'); await sleep(220); await shots('walkL', 4, 110); await keyUp('KeyA');
+
+    await resetSpot();
+    await keyDown('ShiftLeft'); await keyDown('KeyD'); await sleep(180);
+    await shots('sprint', 8, 75);
+    await keyUp('KeyD'); await keyUp('ShiftLeft');
+
+    await resetSpot();
+    await keyPress('KeyC'); await sleep(200);
     await keyDown('KeyD'); await sleep(180); await shots('crouch', 8, 110); await keyUp('KeyD');
-    await keyPress('KeyC'); await sleep(220);
+    await keyPress('KeyC'); await sleep(200);
+
+    await resetSpot();
     await keyPress('Space'); await shots('slash', 10, 55);
-    console.log('player strip captured to:', out, 'page errors:', errs.length);
+
+    const endState = await evalJS(`({
+      mode: window.belumGameInstance.mode,
+      hp: window.belumGameInstance.player.hp
+    })`);
+    console.log(JSON.stringify({ out, startHp, endState, errs }));
+    if (endState.mode !== 'PLAYING' || endState.hp !== startHp || errs.length > 0) {
+      process.exit(1);
+    }
   } finally {
     if (ws) try { ws.close(); } catch (_) {}
     chrome.kill('SIGKILL');

@@ -1,5 +1,12 @@
 # Belum: Protocol Zero — Follow-up Fix Tasks
 
+> **Status: COMPLETED** — All Fixes 1–5 implemented, verified in headless Chromium (`npm run qc` 69/69, `npm run test:ai` 3/3, `tools/check_new_game_checkpoint.js` exit 0, `tools/check_queued_input.js` exit 0, 3x `tools/capture_player_strip.js`, Fix 4 5 s pause check, and Fix 5 damaged-checkpoint checks), and merged on `main`:
+> - [x] **Fix 1:** Clear stale checkpoint and write fresh Sector 1 checkpoint in `startGameplay()` (`src/main.js`, `tools/check_new_game_checkpoint.js`)
+> - [x] **Fix 2:** Use `AIM_HOLD_FRAME = 5` in `Mercenary.draw()` to hide painted horizontal laser until B1 fire art lands (`src/entities/mercenary.js`, `tools/capture_enemy_strip.js`)
+> - [x] **Fix 3:** Freeze enemies, prevent damage, snap player to open Sector 1 spot per row, and assert `PLAYING` & unchanged HP in `tools/capture_player_strip.js`
+> - [x] **Fix 4:** Add `PAUSED` mode, `onUtilityOpen`/`onUtilityClose` HUD callbacks, `PAUSED` header badge, and `Escape` open/close (`src/main.js`, `src/ui/hud.js`, `src/input/input_manager.js`, `index.html`, `style.css`)
+> - [x] **Fix 5:** Validate `spawn`, `inventory` (schema types & unknown-key stripping), `unlockedWeapons`, and `activeWeapon` in `validateCheckpoint()` (`src/main.js`)
+
 Task file for the implementing agent. These fixes come from a review of commit `b8084f4` (the `AUDIT_FIX_TASKS.md` fixes and Part A of the player and enemy art tasks). Do them in order, before `ACT1_EXPANSION_MODERN_TASKS.md`.
 
 ## Rules

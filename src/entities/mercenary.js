@@ -6,6 +6,10 @@
     (global.BelumGame && global.BelumGame.Sprite8FrameAnimator) ||
     (typeof require !== 'undefined' ? require('../engine/animator.js') : null);
 
+  // Temporary: frame 6 (index 5) has the rifle raised with no painted horizontal laser or muzzle flash.
+  // Set back to 1 when the new ENEMY_ART_ANIMATION_TASKS B1 fire sheet (with no painted laser) lands.
+  const AIM_HOLD_FRAME = 5;
+
   function normalizeAngle(a) {
     let r = a;
     while (r > Math.PI) r -= Math.PI * 2;
@@ -635,7 +639,7 @@
             : (this.animFire && this.animFire.isReady() ? this.animFire : null);
         if (aimAnim) {
           const prevFrame = aimAnim.currentFrame;
-          aimAnim.currentFrame = 1; // Frame 2 (1-indexed): braced aiming pose
+          aimAnim.currentFrame = AIM_HOLD_FRAME;
           const flip = (aimAnim === this.animFire) ? !this.facingRight : false;
           drawn = aimAnim.draw(ctx, drawX, drawY, drawW, drawH, flip);
           aimAnim.currentFrame = prevFrame;

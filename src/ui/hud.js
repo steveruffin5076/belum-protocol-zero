@@ -40,6 +40,7 @@
 
       this.utilityModal = document.getElementById('utility-modal');
       this.utilityTitle = document.getElementById('utility-modal-title');
+      this.utilityPausedBadge = document.getElementById('utility-paused-badge');
       this.utilityBody = document.getElementById('utility-modal-body');
       this.btnUtilityClose = document.getElementById('btn-utility-close');
 
@@ -131,10 +132,18 @@
       this.toastTimer = durationSec || 2.8;
     }
 
+    isUtilityOpen() {
+      return !!(this.utilityModal && !this.utilityModal.classList.contains('hidden'));
+    }
+
     openUtility(tab) {
       if (!this.utilityModal || !this.utilityTitle || !this.utilityBody) return;
+      if (this.cb.onUtilityOpen) this.cb.onUtilityOpen(tab);
       const snapshot = this.cb.getSnapshot ? this.cb.getSnapshot() : null;
       this.utilityModal.classList.remove('hidden');
+      if (this.utilityPausedBadge) {
+        this.utilityPausedBadge.classList.toggle('hidden', !(snapshot && snapshot.isPaused));
+      }
 
       if (tab === 'dossier') {
         this.utilityTitle.textContent = 'CLASSIFIED FIELD DOSSIER // GGK COMMAND';
@@ -222,7 +231,10 @@
     }
 
     closeUtility() {
+      const wasOpen = this.isUtilityOpen();
       if (this.utilityModal) this.utilityModal.classList.add('hidden');
+      if (this.utilityPausedBadge) this.utilityPausedBadge.classList.add('hidden');
+      if (wasOpen && this.cb.onUtilityClose) this.cb.onUtilityClose();
     }
 
     update(state, dt) {

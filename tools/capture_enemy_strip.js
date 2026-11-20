@@ -60,13 +60,15 @@ async function runWithPlaywright() {
       await shot(`fire_${dn}_${f}`, 'mercenaries', mi);
     }
   }
-  await p.evaluate(([i]) => {
-    const m = window.belumGameInstance.mercenaries[i];
-    m.firingAnimTimer = 0; m.state = 'ALERT'; m.holdingAimPose = true; m.facingAngle = 0; m.facingRight = true;
-    m.spriteDir = 'side'; m._updateSpriteDir();
-    if (m.animFire) m.animFire.currentFrame = 1;
-  }, [mi]);
-  await shot('fire_aim_hold', 'mercenaries', mi);
+  for (const [dn, ang] of [['right', 0], ['up', -Math.PI / 2], ['down', Math.PI / 2]]) {
+    await p.evaluate(([i, ang]) => {
+      const m = window.belumGameInstance.mercenaries[i];
+      m.firingAnimTimer = 0; m.state = 'ALERT'; m.holdingAimPose = true;
+      m.facingAngle = ang; m.facingRight = Math.cos(ang) >= 0;
+      m.spriteDir = 'side'; m._updateSpriteDir();
+    }, [mi, ang]);
+    await shot(`fire_aim_hold_${dn}`, 'mercenaries', mi);
+  }
   await p.evaluate(([i]) => { const m = window.belumGameInstance.mercenaries[i]; m.firingAnimTimer = 0; m.holdingAimPose = false; m.dead = true; m.state = 'DEAD'; }, [mi]);
   await shot('merc_dead', 'mercenaries', mi);
   if (si >= 0) {
@@ -203,13 +205,15 @@ async function runWithCDP() {
         await shot(`fire_${dn}_${f}`, 'mercenaries', mi);
       }
     }
-    await evalJS(`(() => {
-      const m = window.belumGameInstance.mercenaries[${mi}];
-      m.firingAnimTimer = 0; m.state = 'ALERT'; m.holdingAimPose = true; m.facingAngle = 0; m.facingRight = true;
-      m.spriteDir = 'side'; m._updateSpriteDir();
-      if (m.animFire) m.animFire.currentFrame = 1;
-    })()`);
-    await shot('fire_aim_hold', 'mercenaries', mi);
+    for (const [dn, ang] of [['right', 0], ['up', -Math.PI / 2], ['down', Math.PI / 2]]) {
+      await evalJS(`(() => {
+        const m = window.belumGameInstance.mercenaries[${mi}];
+        m.firingAnimTimer = 0; m.state = 'ALERT'; m.holdingAimPose = true;
+        m.facingAngle = ${ang}; m.facingRight = Math.cos(${ang}) >= 0;
+        m.spriteDir = 'side'; m._updateSpriteDir();
+      })()`);
+      await shot(`fire_aim_hold_${dn}`, 'mercenaries', mi);
+    }
     await evalJS(`(() => { const m = window.belumGameInstance.mercenaries[${mi}]; m.firingAnimTimer = 0; m.holdingAimPose = false; m.dead = true; m.state = 'DEAD'; })()`);
     await shot('merc_dead', 'mercenaries', mi);
 

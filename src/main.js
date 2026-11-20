@@ -14,12 +14,30 @@
     4: { x: 3255, y: 640 }
   };
 
+  const VALID_WEAPONS = ['parang', 'crossbow', 'pistol', 'decoy'];
+  const INVENTORY_SCHEMA = {
+    hasParangPickup: 'boolean',
+    hasKeycard: 'boolean',
+    encryptedDrives: 'number',
+    decryptedLore: 'array',
+    dirtyWater: 'number',
+    pureWater: 'number',
+    bambooShoots: 'number',
+    boarMeat: 'number',
+    jungleStew: 'number',
+    scrapWire: 'number'
+  };
+
+  function isPlainObject(v) {
+    return !!v && typeof v === 'object' && !Array.isArray(v);
+  }
+
   function isStringArray(arr) {
     return Array.isArray(arr) && arr.every((v) => typeof v === 'string');
   }
 
   function validateCheckpoint(data) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    if (!isPlainObject(data)) {
       return { ok: false, reason: 'damaged', data: null };
     }
     const migrated = Object.assign({}, data);
@@ -46,8 +64,38 @@
       return { ok: false, reason: 'damaged', data: null };
     }
 
+    if (migrated.spawn !== undefined) {
+      if (
+        !isPlainObject(migrated.spawn) ||
+        typeof migrated.spawn.x !== 'number' || !Number.isFinite(migrated.spawn.x) ||
+        migrated.spawn.x < 0 || migrated.spawn.x > 4200 ||
+        typeof migrated.spawn.y !== 'number' || !Number.isFinite(migrated.spawn.y) ||
+        migrated.spawn.y < 0 || migrated.spawn.y > 1320
+      ) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+    }
+
+    if (migrated.activeWeapon !== undefined) {
+      if (typeof migrated.activeWeapon !== 'string' || !VALID_WEAPONS.includes(migrated.activeWeapon)) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+    }
+
+    if (migrated.unlockedWeapons !== undefined) {
+      if (!isPlainObject(migrated.unlockedWeapons)) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+      const wKeys = Object.keys(migrated.unlockedWeapons);
+      for (let i = 0; i < wKeys.length; i++) {
+        if (typeof migrated.unlockedWeapons[wKeys[i]] !== 'boolean') {
+          return { ok: false, reason: 'damaged', data: null };
+        }
+      }
+    }
+
     if (migrated.ammo !== undefined) {
-      if (!migrated.ammo || typeof migrated.ammo !== 'object' || Array.isArray(migrated.ammo)) {
+      if (!isPlainObject(migrated.ammo)) {
         return { ok: false, reason: 'damaged', data: null };
       }
       const keys = Object.keys(migrated.ammo);
@@ -59,6 +107,37 @@
       }
     }
 
+    if (migrated.inventory !== undefined) {
+      if (!isPlainObject(migrated.inventory)) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+      const cleanInv = {};
+      const invKeys = Object.keys(migrated.inventory);
+      for (let i = 0; i < invKeys.length; i++) {
+        const k = invKeys[i];
+        if (!Object.prototype.hasOwnProperty.call(INVENTORY_SCHEMA, k)) {
+          continue; // Drop unknown keys
+        }
+        const expected = INVENTORY_SCHEMA[k];
+        const v = migrated.inventory[k];
+        if (expected === 'number') {
+          if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+            return { ok: false, reason: 'damaged', data: null };
+          }
+        } else if (expected === 'boolean') {
+          if (typeof v !== 'boolean') {
+            return { ok: false, reason: 'damaged', data: null };
+          }
+        } else if (expected === 'array') {
+          if (!Array.isArray(v)) {
+            return { ok: false, reason: 'damaged', data: null };
+          }
+        }
+        cleanInv[k] = v;
+      }
+      migrated.inventory = cleanInv;
+    }
+
     if (!isStringArray(migrated.collectedPickups)) {
       return { ok: false, reason: 'damaged', data: null };
     }
@@ -68,7 +147,7 @@
     if (!isStringArray(migrated.deadBoars)) {
       return { ok: false, reason: 'damaged', data: null };
     }
-    if (migrated.flags !== undefined && (!migrated.flags || typeof migrated.flags !== 'object' || Array.isArray(migrated.flags))) {
+    if (migrated.flags !== undefined && !isPlainObject(migrated.flags)) {
       return { ok: false, reason: 'damaged', data: null };
     }
     migrated.flags = migrated.flags || {};
@@ -80,7 +159,7 @@
     constructor() {
       this.ns = global.BelumGame || {};
       this.canvas = typeof document !== 'undefined' ? document.getElementById('game-canvas') : null;
-      this.mode = 'PROLOGUE'; // 'PROLOGUE' | 'PLAYING' | 'CAMP' | 'VICTORY' | 'GAME_OVER'
+      this.mode = 'PROLOGUE'; // 'PROLOGUE' | 'PLAYING' | 'PAUSED' | 'CAMP' | 'VICTORY' | 'GAME_OVER'
       this.lastTs = 0;
       this.rafId = null;
       this.hitStopTimer = 0;
@@ -94,6 +173,7 @@
             isGameplayActive: () => this.mode === 'PLAYING',
             onToggleMute: () => this._toggleMute(),
             onOpenDossier: () => this.hud && this.hud.openUtility('dossier'),
+            onEscape: () => this._handleEscape(),
             onUserGesture: () => {
               if (this.sound) this.sound.unlock();
             }
@@ -131,10 +211,13 @@
             onToggleMute: () => this._toggleMute(),
             onAudioBadgeClick: () => this._handleAudioBadgeClick(),
             onUpdateSettings: (patch) => this._updateSettings(patch),
+            onUtilityOpen: () => this._onUtilityOpen(),
+            onUtilityClose: () => this._onUtilityClose(),
             getSnapshot: () => ({
               player: this.player,
               audioMuted: this.sound ? this.sound.muted : false,
-              settings: Object.assign({}, this.settings)
+              settings: Object.assign({}, this.settings),
+              isPaused: this.mode === 'PAUSED'
             })
           })
         : null;
@@ -501,9 +584,8 @@
       this.mode = 'PLAYING';
       if (this.input) this.input.clearActions();
       if (this.sound) this.sound.unlock();
-      if (!this._hasSavedCheckpointKey()) {
-        this._saveSectorCheckpoint(1, true);
-      }
+      this._clearCheckpoint();
+      this._saveSectorCheckpoint(1, true);
       if (this.hud) {
         this.hud.show();
         this.hud.showToast('INSERTION COMPLETE — STAY LOW IN FERNS & BEHIND LOGS', 3.5);
@@ -533,6 +615,28 @@
         if (this.hud) this.hud.showToast(`EQUIPPED: ${weaponId.toUpperCase()}`, 1.4);
       } else if (this.hud) {
         this.hud.showToast(`${weaponId.toUpperCase()} NOT YET ACQUIRED`, 1.8);
+      }
+    }
+
+    _onUtilityOpen() {
+      if (this.mode === 'PLAYING') {
+        this.mode = 'PAUSED';
+      }
+    }
+
+    _onUtilityClose() {
+      if (this.mode === 'PAUSED') {
+        this.mode = 'PLAYING';
+        if (this.input) this.input.clearActions();
+      }
+    }
+
+    _handleEscape() {
+      if (!this.hud) return;
+      if (this.hud.isUtilityOpen()) {
+        this.hud.closeUtility();
+      } else if (this.mode === 'PLAYING') {
+        this.hud.openUtility('settings');
       }
     }
 

@@ -103,6 +103,8 @@
             this.cb.onToggleMute();
           } else if (code === 'KeyJ' && this.cb.onOpenDossier) {
             this.cb.onOpenDossier();
+          } else if (code === 'Escape' && this.cb.onEscape) {
+            this.cb.onEscape();
           } else if (code === 'KeyC' || code === 'ControlLeft' || code === 'ControlRight') {
             this.crouchToggle = !this.crouchToggle;
           } else if (this._isGameplayActive()) {
