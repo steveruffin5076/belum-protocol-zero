@@ -49,7 +49,10 @@
       this.provokedTarget = null;
 
       this.animIdle = Animator ? new Animator({ fps: 8, framePrefix: 'boar_idle' }) : null;
-      this.animCharge = Animator ? new Animator({ fps: 12, framePrefix: 'boar_charge' }) : null;
+      // Enemy Part A4: Split telegraph pawing (frames 0-2) from full-speed charge gallop (frames 3-7)
+      this.animPaw = Animator ? new Animator({ fps: 6, firstFrame: 0, lastFrame: 2, loop: true, framePrefix: 'boar_charge' }) : null;
+      this.animRun = Animator ? new Animator({ fps: 14, firstFrame: 3, lastFrame: 7, loop: true, framePrefix: 'boar_charge' }) : null;
+      this.animCharge = this.animRun;
     }
 
     get centerX() {
@@ -100,7 +103,8 @@
       this.chargeDirX = dx / mag;
       this.chargeDirY = dy / mag;
       this.facingRight = this.chargeDirX >= 0;
-      if (this.animCharge) this.animCharge.reset();
+      if (this.animPaw) this.animPaw.reset();
+      if (this.animRun) this.animRun.reset();
       if (ctxEvents && ctxEvents.onBoarTelegraph) {
         ctxEvents.onBoarTelegraph(this);
       }
@@ -169,11 +173,12 @@
         if (this.animIdle) this.animIdle.update(safeDt, true);
       } else if (this.state === 'TELEGRAPH') {
         this.telegraphTimer += safeDt;
-        if (this.animCharge) this.animCharge.update(safeDt * 0.5, true);
+        if (this.animPaw) this.animPaw.update(safeDt, true);
         if (this.telegraphTimer >= this.telegraphDuration) {
           this.state = 'CHARGE';
           this.chargeTimer = this.chargeDuration;
           this.hitSet.clear();
+          if (this.animRun) this.animRun.reset();
           if (ctxEvents && ctxEvents.onBoarCharge) {
             ctxEvents.onBoarCharge(this);
           }
@@ -191,7 +196,7 @@
 
         this._checkChargeImpacts(player, mercenaries, ctxEvents);
 
-        if (this.animCharge) this.animCharge.update(safeDt * 1.4, true);
+        if (this.animRun) this.animRun.update(safeDt, true);
 
         if (collidedObs) {
           // AAA Matador Wall-Crash Concussion!
@@ -230,7 +235,7 @@
             const dist = Math.hypot(m.centerX - this.centerX, m.centerY - this.centerY);
             if (dist < impactR) {
               this.hitSet.add(m.id);
-              const dealt = m.takeDamage(this.chargeDamage, { x: this.centerX, y: this.centerY }, ctxEvents);
+              const dealt = m.takeDamage(this.chargeDamage, { x: this.centerX, y: this.centerY }, ctxEvents, 'FAUNA');
               if (ctxEvents && ctxEvents.onBoarImpact) {
                 ctxEvents.onBoarImpact(m, dealt, '78', this);
               }
@@ -331,14 +336,15 @@
       ctx.fill();
 
       const drawW = 104;
-      const drawH = 88;
+      const drawH = 102;
       const drawX = this.centerX - drawW * 0.5;
-      const drawY = this.y + this.height - drawH + 10;
+      const drawY = this.y + this.height - drawH + 8;
 
       let drawn = false;
-      const useCharge = this.state === 'TELEGRAPH' || this.state === 'CHARGE';
-      if (useCharge && this.animCharge && this.animCharge.isReady()) {
-        drawn = this.animCharge.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
+      if (this.state === 'TELEGRAPH' && this.animPaw && this.animPaw.isReady()) {
+        drawn = this.animPaw.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
+      } else if (this.state === 'CHARGE' && this.animRun && this.animRun.isReady()) {
+        drawn = this.animRun.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
       } else if (this.animIdle && this.animIdle.isReady()) {
         drawn = this.animIdle.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
       }
@@ -371,11 +377,18 @@
       }
 
       if (this.hurtFlashTimer > 0) {
-        ctx.strokeStyle = '#F85A5A';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(this.centerX, this.centerY, 32, 0, Math.PI * 2);
-        ctx.stroke();
+        if (global.BelumGame && global.BelumGame.reduceFlash) {
+          ctx.fillStyle = 'rgba(248, 90, 90, 0.22)';
+          ctx.beginPath();
+          ctx.ellipse(this.centerX, this.centerY, 30, 22, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = '#F85A5A';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(this.centerX, this.centerY, 32, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
       ctx.restore();

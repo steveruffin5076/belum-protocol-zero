@@ -5,12 +5,76 @@
   'use strict';
 
   const CHECKPOINT_KEY = 'belum_checkpoint';
+  const CHECKPOINT_VERSION = 1;
+  const SETTINGS_KEY = 'belum_settings';
   const SECTOR_SPAWNS = {
     1: { x: 185, y: 645 },
     2: { x: 1110, y: 640 },
     3: { x: 2205, y: 650 },
     4: { x: 3255, y: 640 }
   };
+
+  function isStringArray(arr) {
+    return Array.isArray(arr) && arr.every((v) => typeof v === 'string');
+  }
+
+  function validateCheckpoint(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return { ok: false, reason: 'damaged', data: null };
+    }
+    const migrated = Object.assign({}, data);
+    if (migrated.version === undefined) {
+      // Migrate legacy unversioned checkpoint to version 1
+      migrated.version = CHECKPOINT_VERSION;
+      migrated.collectedPickups = [];
+      migrated.deadMercs = [];
+      migrated.deadBoars = [];
+      migrated.flags = {};
+    } else {
+      if (!Number.isInteger(migrated.version)) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+      if (migrated.version > CHECKPOINT_VERSION) {
+        return { ok: false, reason: 'newer', data: null };
+      }
+      if (migrated.version < 1) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+    }
+
+    if (!Number.isInteger(migrated.sector) || migrated.sector < 1 || migrated.sector > 4) {
+      return { ok: false, reason: 'damaged', data: null };
+    }
+
+    if (migrated.ammo !== undefined) {
+      if (!migrated.ammo || typeof migrated.ammo !== 'object' || Array.isArray(migrated.ammo)) {
+        return { ok: false, reason: 'damaged', data: null };
+      }
+      const keys = Object.keys(migrated.ammo);
+      for (let i = 0; i < keys.length; i++) {
+        const v = migrated.ammo[keys[i]];
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+          return { ok: false, reason: 'damaged', data: null };
+        }
+      }
+    }
+
+    if (!isStringArray(migrated.collectedPickups)) {
+      return { ok: false, reason: 'damaged', data: null };
+    }
+    if (!isStringArray(migrated.deadMercs)) {
+      return { ok: false, reason: 'damaged', data: null };
+    }
+    if (!isStringArray(migrated.deadBoars)) {
+      return { ok: false, reason: 'damaged', data: null };
+    }
+    if (migrated.flags !== undefined && (!migrated.flags || typeof migrated.flags !== 'object' || Array.isArray(migrated.flags))) {
+      return { ok: false, reason: 'damaged', data: null };
+    }
+    migrated.flags = migrated.flags || {};
+
+    return { ok: true, reason: null, data: migrated };
+  }
 
   class BelumProtocolZeroGame {
     constructor() {
@@ -27,6 +91,7 @@
       this.camera = this.ns.Camera25D ? new this.ns.Camera25D(1280, 720, 4200, 1320) : null;
       this.input = this.ns.InputManager
         ? new this.ns.InputManager(this.canvas, {
+            isGameplayActive: () => this.mode === 'PLAYING',
             onToggleMute: () => this._toggleMute(),
             onOpenDossier: () => this.hud && this.hud.openUtility('dossier'),
             onUserGesture: () => {
@@ -38,7 +103,10 @@
       this.camp = this.ns.BivouacCamp
         ? new this.ns.BivouacCamp({
             onClose: () => {
-              if (this.mode === 'CAMP') this.mode = 'PLAYING';
+              if (this.mode === 'CAMP') {
+                this.mode = 'PLAYING';
+                if (this.input) this.input.clearActions();
+              }
             },
             onCraftSuccess: () => {
               if (this.sound) this.sound.playDecoyClatter();
@@ -53,15 +121,20 @@
           })
         : null;
 
+      this.settings = this._loadSettings();
+      this._applySettings();
+
       this.hud = this.ns.HUDController
         ? new this.ns.HUDController({
             onOpenCamp: () => this.tryOpenCamp(),
             onSelectWeapon: (wid) => this._selectWeapon(wid),
             onToggleMute: () => this._toggleMute(),
             onAudioBadgeClick: () => this._handleAudioBadgeClick(),
+            onUpdateSettings: (patch) => this._updateSettings(patch),
             getSnapshot: () => ({
               player: this.player,
-              audioMuted: this.sound ? this.sound.muted : false
+              audioMuted: this.sound ? this.sound.muted : false,
+              settings: Object.assign({}, this.settings)
             })
           })
         : null;
@@ -78,6 +151,55 @@
         this.startGameplay();
       }
       this._startLoop();
+    }
+
+    _loadSettings() {
+      const defaults = { version: 1, shake: 100, reduceFlash: false };
+      if (typeof localStorage === 'undefined') return defaults;
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY);
+        if (!raw) return defaults;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return defaults;
+        const shake = Number.isFinite(parsed.shake) ? Math.max(0, Math.min(100, Math.round(parsed.shake))) : 100;
+        const reduceFlash = typeof parsed.reduceFlash === 'boolean' ? parsed.reduceFlash : false;
+        return { version: 1, shake, reduceFlash };
+      } catch (_) {
+        return defaults;
+      }
+    }
+
+    _saveSettings() {
+      if (typeof localStorage === 'undefined') return;
+      try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+          version: 1,
+          shake: this.settings.shake,
+          reduceFlash: !!this.settings.reduceFlash
+        }));
+      } catch (_) {
+        // Ignore storage errors and keep in-memory settings
+      }
+    }
+
+    _applySettings() {
+      if (this.camera && typeof this.camera.setShakeStrength === 'function') {
+        this.camera.setShakeStrength((this.settings.shake || 0) / 100);
+      }
+      global.BelumGame = global.BelumGame || {};
+      global.BelumGame.reduceFlash = !!this.settings.reduceFlash;
+    }
+
+    _updateSettings(patch) {
+      if (!patch || typeof patch !== 'object') return;
+      if (Number.isFinite(patch.shake)) {
+        this.settings.shake = Math.max(0, Math.min(100, Math.round(patch.shake)));
+      }
+      if (typeof patch.reduceFlash === 'boolean') {
+        this.settings.reduceFlash = patch.reduceFlash;
+      }
+      this._applySettings();
+      this._saveSettings();
     }
 
     _vibrate(pattern) {
@@ -158,31 +280,84 @@
     _saveSectorCheckpoint(sectorId, silent) {
       if (!this.player || typeof localStorage === 'undefined') return;
       try {
+        const items = (this.level && this.level.interactables) || [];
+        const collectedPickups = items.filter((it) => it && it.collected && it.id).map((it) => String(it.id));
+        const deadMercs = (this.mercenaries || []).filter((m) => m && m.dead && m.id).map((m) => String(m.id));
+        const deadBoars = (this.boars || []).filter((b) => b && b.dead && b.id).map((b) => String(b.id));
         const data = {
+          version: CHECKPOINT_VERSION,
           sector: sectorId || 1,
           spawn: SECTOR_SPAWNS[sectorId] || SECTOR_SPAWNS[1],
           activeWeapon: this.player.activeWeapon,
           unlockedWeapons: Object.assign({}, this.player.unlockedWeapons),
           ammo: Object.assign({}, this.player.ammo),
-          inventory: JSON.parse(JSON.stringify(this.player.inventory))
+          inventory: JSON.parse(JSON.stringify(this.player.inventory)),
+          collectedPickups,
+          deadMercs,
+          deadBoars,
+          flags: {
+            generatorSabotaged: !!(this.level && this.level.generatorSabotaged),
+            culvertUnlocked: !!(this.level && this.level.culvertUnlocked),
+            blastGateOpen: !!(this.level && this.level.blastGateOpen),
+            drivesDecrypted: this.stats ? this.stats.drivesDecrypted : 0
+          }
         };
         localStorage.setItem(CHECKPOINT_KEY, JSON.stringify(data));
         if (!silent && this.hud) {
           this.hud.showToast(`CHECKPOINT SAVED // SECTOR ${sectorId}`, 2.4);
         }
       } catch (_) {
-        // Ignore storage quota / private mode errors
+        if (this.hud) {
+          this.hud.showToast('CHECKPOINT NOT SAVED (storage blocked)', 3.0);
+        }
       }
     }
 
-    _loadCheckpoint() {
-      if (typeof localStorage === 'undefined') return null;
+    _hasSavedCheckpointKey() {
+      if (typeof localStorage === 'undefined') return false;
       try {
-        const raw = localStorage.getItem(CHECKPOINT_KEY);
-        return raw ? JSON.parse(raw) : null;
+        return localStorage.getItem(CHECKPOINT_KEY) !== null;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    _loadCheckpoint(notifyOnError) {
+      if (typeof localStorage === 'undefined') return null;
+      let raw = null;
+      try {
+        raw = localStorage.getItem(CHECKPOINT_KEY);
       } catch (_) {
         return null;
       }
+      if (!raw) return null;
+
+      let parsed = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_) {
+        this._clearCheckpoint();
+        if (notifyOnError && this.hud) {
+          this.hud.showToast('Checkpoint was damaged and has been reset.', 3.4);
+        }
+        return null;
+      }
+
+      const result = validateCheckpoint(parsed);
+      if (!result.ok) {
+        if (result.reason === 'newer') {
+          if (notifyOnError && this.hud) {
+            this.hud.showToast('Checkpoint is from a newer version and was not loaded.', 3.4);
+          }
+          return null;
+        }
+        this._clearCheckpoint();
+        if (notifyOnError && this.hud) {
+          this.hud.showToast('Checkpoint was damaged and has been reset.', 3.4);
+        }
+        return null;
+      }
+      return result.data;
     }
 
     _clearCheckpoint() {
@@ -193,9 +368,11 @@
     }
 
     retryFromCheckpoint() {
-      const cp = this._loadCheckpoint();
+      const cp = this._loadCheckpoint(true);
       this.resetAct1();
+      let restored = false;
       if (cp && this.player) {
+        restored = true;
         const sp = cp.spawn || SECTOR_SPAWNS[cp.sector] || SECTOR_SPAWNS[1];
         this.player.x = sp.x;
         this.player.y = sp.y;
@@ -207,14 +384,73 @@
         if (cp.activeWeapon && this.player.unlockedWeapons[cp.activeWeapon]) {
           this.player.activeWeapon = cp.activeWeapon;
         }
+
+        // Fix 4: Restore saved world state without spawning ink puddles or toasts
+        if (this.level && Array.isArray(cp.collectedPickups)) {
+          const collectedSet = new Set(cp.collectedPickups);
+          const items = this.level.interactables || [];
+          for (let i = 0; i < items.length; i++) {
+            if (collectedSet.has(String(items[i].id))) {
+              items[i].collected = true;
+            }
+          }
+        }
+        if (Array.isArray(cp.deadMercs)) {
+          const deadMercSet = new Set(cp.deadMercs);
+          for (let i = 0; i < this.mercenaries.length; i++) {
+            const m = this.mercenaries[i];
+            if (deadMercSet.has(String(m.id))) {
+              m.hp = 0;
+              m.dead = true;
+              m.state = 'DEAD';
+              m.suspicionMeter = 0;
+            }
+          }
+        }
+        if (Array.isArray(cp.deadBoars)) {
+          const deadBoarSet = new Set(cp.deadBoars);
+          for (let i = 0; i < this.boars.length; i++) {
+            const b = this.boars[i];
+            if (deadBoarSet.has(String(b.id))) {
+              b.hp = 0;
+              b.dead = true;
+              b.state = 'DEAD';
+            }
+          }
+        }
+        if (cp.flags && this.level) {
+          if (cp.flags.generatorSabotaged) {
+            this.level.generatorSabotaged = true;
+            for (let f = 0; f < this.level.floodlights.length; f++) {
+              if (this.level.floodlights[f].sector === 2) this.level.floodlights[f].active = false;
+            }
+          }
+          if (cp.flags.culvertUnlocked) {
+            this.level.culvertUnlocked = true;
+            const grate = this.level.obstacles.find((o) => o.id === 'culvert_grate');
+            if (grate) grate.unlocked = true;
+          }
+          if (cp.flags.blastGateOpen) {
+            this.level.blastGateOpen = true;
+            const gateObs = this.level.obstacles.find((o) => o.id === 'blast_gate');
+            if (gateObs) gateObs.openProgress = 1;
+          }
+          if (Number.isFinite(cp.flags.drivesDecrypted) && this.stats) {
+            this.stats.drivesDecrypted = cp.flags.drivesDecrypted;
+          }
+        }
+
         this.currentSectorId = cp.sector || 1;
         this.highestSavedSector = this.currentSectorId;
         if (this.camera) this.camera.snapTo(this.player.centerX, this.player.centerY);
       }
       this.mode = 'PLAYING';
+      if (this.input) this.input.clearActions();
       if (this.hud) {
         this.hud.show();
-        this.hud.showToast(`RESPAWNED AT SECTOR ${this.currentSectorId} CHECKPOINT`, 2.8);
+        if (restored) {
+          this.hud.showToast(`RESPAWNED AT SECTOR ${this.currentSectorId} CHECKPOINT`, 2.8);
+        }
       }
     }
 
@@ -263,8 +499,11 @@
 
     startGameplay() {
       this.mode = 'PLAYING';
+      if (this.input) this.input.clearActions();
       if (this.sound) this.sound.unlock();
-      this._saveSectorCheckpoint(1, true);
+      if (!this._hasSavedCheckpointKey()) {
+        this._saveSectorCheckpoint(1, true);
+      }
       if (this.hud) {
         this.hud.show();
         this.hud.showToast('INSERTION COMPLETE — STAY LOW IN FERNS & BEHIND LOGS', 3.5);
@@ -440,11 +679,14 @@
 
       // 5. AI Updates (Mercenaries + Mutated Boars + Faction Infighting + Wall-Stun)
       const aiEvents = {
-        onRadioAlert: (merc) => {
-          this.stats.alertsTriggered++;
+        onRadioAlert: (merc, faction) => {
+          const alertFaction = faction || 'PLAYER';
+          if (alertFaction === 'PLAYER') {
+            this.stats.alertsTriggered++;
+          }
           this._vibrate([30, 50]);
           if (this.sound) this.sound.playRadioAlert();
-          this._spawnFloat(merc.centerX, merc.y - 24, 'CONTACT!', '#F85A5A', false);
+          this._spawnFloat(merc.centerX, merc.y - 24, alertFaction === 'FAUNA' ? 'BOAR!' : 'CONTACT!', '#F85A5A', false);
           for (let j = 0; j < this.mercenaries.length; j++) {
             const ally = this.mercenaries[j];
             if (!ally.dead && ally !== merc && Math.hypot(ally.centerX - merc.centerX, ally.centerY - merc.centerY) < 360) {
@@ -630,7 +872,7 @@
       const p = this.player;
       if (!p || p.attackCooldown > 0) return;
       p.attackCooldown = 0.42;
-      p.parangAnimTimer = 0.36;
+      p.parangAnimTimer = 0.5;
       if (p.animParang) p.animParang.reset();
       if (this.sound) this.sound.playParangSlash();
       this._vibrate(15);
@@ -666,9 +908,11 @@
             }
           });
 
-          // AAA Hit-Stop + Directional Trauma + Haptics
-          this.triggerHitStop(45);
-          if (this.camera) this.camera.addTrauma(isStealthTakedown ? 0.58 : 0.34, dx, dy);
+          // Fix 6.5: Silent stealth takedowns feel quiet (0.2 trauma, no hit-stop); open melee keeps 45ms hit-stop
+          if (!isStealthTakedown) {
+            this.triggerHitStop(45);
+          }
+          if (this.camera) this.camera.addTrauma(isStealthTakedown ? 0.2 : 0.34, dx, dy);
           if (isStealthTakedown) {
             this._vibrate([25, 40, 25]);
             this.slashEffects[this.slashEffects.length - 1].isStealth = true;
@@ -1256,7 +1500,7 @@
           : 'Ironclad forces or BT-09 mutated fauna overwhelmed your position. Stay low in dense ferns, bait boars into walls for a Matador stun, or retry from your last sector checkpoint.';
       }
       if (btnRetry) {
-        const hasCp = !victory && !!this._loadCheckpoint();
+        const hasCp = !victory && this._hasSavedCheckpointKey();
         btnRetry.classList.toggle('hidden', !hasCp);
         if (hasCp) btnRetry.textContent = `RETRY CURRENT SECTOR (SECTOR ${this.currentSectorId})`;
       }
@@ -1273,6 +1517,8 @@
       if (modal) modal.classList.remove('hidden');
     }
   }
+
+  BelumProtocolZeroGame.validateCheckpoint = validateCheckpoint;
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = BelumProtocolZeroGame;

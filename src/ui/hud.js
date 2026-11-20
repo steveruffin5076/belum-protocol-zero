@@ -175,9 +175,25 @@
       } else {
         this.utilityTitle.textContent = 'FIELD SETTINGS & AUDIO';
         const muted = snapshot && snapshot.audioMuted;
+        const settings = (snapshot && snapshot.settings) || { shake: 100, reduceFlash: false };
+        const shakeVal = Number.isFinite(settings.shake) ? Math.round(settings.shake) : 100;
+        const reduceFlash = !!settings.reduceFlash;
         this.utilityBody.innerHTML = `
           <p>Procedural Web Audio Synthesizer (Tropical Rain, Belum Cicadas, Parang, Weapons, Radio Alerts).</p>
           <button id="btn-toggle-mute" class="ink-btn primary">${muted ? 'UNMUTE AUDIO' : 'MUTE AUDIO'}</button>
+          <div class="utility-grid" style="margin-top:14px;">
+            <div class="utility-item">
+              <label for="setting-shake-slider"><strong>Screen shake:</strong> <span id="setting-shake-val">${shakeVal}%</span></label><br/>
+              <input id="setting-shake-slider" type="range" min="0" max="100" step="5" value="${shakeVal}" style="width:100%;margin-top:6px;accent-color:#111E33;" />
+            </div>
+            <div class="utility-item">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input id="setting-reduce-flash" type="checkbox" ${reduceFlash ? 'checked' : ''} style="width:16px;height:16px;accent-color:#111E33;" />
+                <strong>Reduce flashing</strong>
+              </label>
+              <div style="font-size:11px;margin-top:4px;opacity:0.85;">Replaces pulsing red hurt-flash rings with a steady soft tint.</div>
+            </div>
+          </div>
           <p style="margin-top:14px;"><strong>Controls:</strong> WASD / Arrows or Bottom-Left D-Pad to move &bull; C to Crouch/Fern Conceal &bull; Shift to Sprint &bull; Left Click / Slash for Primary Attack &bull; Right Click / Fire for Ranged &bull; E / Hand to Interact or Stealth Takedown &bull; Q / Bag for Quick Heal/Water &bull; B / Go Home for Bivouac Camp.</p>
         `;
         const muteBtn = document.getElementById('btn-toggle-mute');
@@ -185,6 +201,21 @@
           muteBtn.addEventListener('click', () => {
             if (this.cb.onToggleMute) this.cb.onToggleMute();
             this.openUtility('settings');
+          });
+        }
+        const shakeSlider = document.getElementById('setting-shake-slider');
+        const shakeLabel = document.getElementById('setting-shake-val');
+        if (shakeSlider) {
+          shakeSlider.addEventListener('input', () => {
+            const val = Number(shakeSlider.value);
+            if (shakeLabel) shakeLabel.textContent = `${val}%`;
+            if (this.cb.onUpdateSettings) this.cb.onUpdateSettings({ shake: val });
+          });
+        }
+        const flashToggle = document.getElementById('setting-reduce-flash');
+        if (flashToggle) {
+          flashToggle.addEventListener('change', () => {
+            if (this.cb.onUpdateSettings) this.cb.onUpdateSettings({ reduceFlash: !!flashToggle.checked });
           });
         }
       }

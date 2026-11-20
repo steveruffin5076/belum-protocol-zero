@@ -277,8 +277,8 @@
 
     // Sector 3: 2 Mutated Babi Hutan (Wild Boars) — grazing near ravine center until provoked by Decoy Rock
     const boarSpecs = [
-      { id: 'boar_1', x: 2480, y: 525 },
-      { id: 'boar_2', x: 2590, y: 720 }
+      { id: 'boar_s3_1', x: 2480, y: 525 },
+      { id: 'boar_s3_2', x: 2590, y: 720 }
     ];
     const boars = MutatedBoar ? boarSpecs.map((b) => new MutatedBoar(b)) : boarSpecs;
 

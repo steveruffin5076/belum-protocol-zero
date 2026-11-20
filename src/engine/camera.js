@@ -30,6 +30,17 @@
       this.recoilDirY = 0.35;
       this.shakeOffsetX = 0;
       this.shakeOffsetY = 0;
+      this.shakeStrength = 1.0; // 0..1 accessibility multiplier (Fix 6)
+    }
+
+    setShakeStrength(strength) {
+      const s = Number.isFinite(strength) ? strength : 1.0;
+      this.shakeStrength = Math.max(0, Math.min(1, s));
+      if (this.shakeStrength === 0) {
+        this.trauma = 0;
+        this.shakeOffsetX = 0;
+        this.shakeOffsetY = 0;
+      }
     }
 
     resize(viewportW, viewportH) {
@@ -53,7 +64,8 @@
      * Directional trauma impulse pushing camera away from impact origin with quadratic decay
      */
     addTrauma(amount, dirX, dirY) {
-      const a = Number.isFinite(amount) ? amount : 0.4;
+      if (this.shakeStrength <= 0) return;
+      const a = (Number.isFinite(amount) ? amount : 0.4) * this.shakeStrength;
       this.trauma = Math.min(1.0, Math.max(this.trauma, this.trauma + a));
       if (Number.isFinite(dirX) && Number.isFinite(dirY)) {
         const mag = Math.hypot(dirX, dirY);

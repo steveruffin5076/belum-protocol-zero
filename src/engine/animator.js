@@ -101,9 +101,12 @@
       const cfg = options || {};
       this.fps = cfg.fps || 8;
       this.frameCount = cfg.frameCount || 8;
+      this.firstFrame = Number.isInteger(cfg.firstFrame) ? Math.max(0, Math.min(this.frameCount - 1, cfg.firstFrame)) : 0;
+      this.lastFrame = Number.isInteger(cfg.lastFrame) ? Math.max(this.firstFrame, Math.min(this.frameCount - 1, cfg.lastFrame)) : (this.frameCount - 1);
+      this.scale = Number.isFinite(cfg.scale) && cfg.scale > 0 ? cfg.scale : 1.0;
       this.loop = cfg.loop !== undefined ? cfg.loop : true;
       this.flipX = !!cfg.flipX;
-      this.currentFrame = 0;
+      this.currentFrame = this.firstFrame;
       this.elapsed = 0;
       this.finished = false;
       this.frames = new Array(this.frameCount).fill(null);
@@ -135,7 +138,7 @@
     }
 
     reset() {
-      this.currentFrame = 0;
+      this.currentFrame = this.firstFrame;
       this.elapsed = 0;
       this.finished = false;
     }
@@ -148,12 +151,12 @@
 
       while (this.elapsed >= frameDuration) {
         this.elapsed -= frameDuration;
-        if (this.currentFrame + 1 < this.frameCount) {
+        if (this.currentFrame + 1 <= this.lastFrame) {
           this.currentFrame++;
         } else if (this.loop) {
-          this.currentFrame = 0;
+          this.currentFrame = this.firstFrame;
         } else {
-          this.currentFrame = this.frameCount - 1;
+          this.currentFrame = this.lastFrame;
           this.finished = true;
         }
       }
@@ -163,11 +166,17 @@
       const frame = this.frames[this.currentFrame];
       if (!ctx || !frame) return false;
       const flip = flipXOverride !== undefined ? flipXOverride : this.flipX;
+      // Shared A2 & A5: Preserve true frame aspect ratio, apply scale, and pin feet at y + drawH
+      const h = drawH * this.scale;
+      const w = (frame.width && frame.height) ? (h * frame.width / frame.height) : (drawW * this.scale);
+      const centerX = x + drawW * 0.5;
+      const bottomY = y + drawH;
+
       ctx.save();
       if (alpha !== undefined) ctx.globalAlpha = alpha;
-      ctx.translate(x + drawW * 0.5, y + drawH * 0.5);
+      ctx.translate(centerX, bottomY - h * 0.5);
       if (flip) ctx.scale(-1, 1);
-      ctx.drawImage(frame, -drawW * 0.5, -drawH * 0.5, drawW, drawH);
+      ctx.drawImage(frame, -w * 0.5, -h * 0.5, w, h);
       ctx.restore();
       return true;
     }

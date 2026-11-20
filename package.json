@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "qc": "node tools/qc_validator.js"
+    "qc": "node tools/qc_validator.js",
+    "test:ai": "node tools/ai_regression_checks.js"
   },
   "license": "MIT"
 }

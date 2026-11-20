@@ -78,6 +78,10 @@
       }
     }
 
+    _isGameplayActive() {
+      return !this.cb || typeof this.cb.isGameplayActive !== 'function' || !!this.cb.isGameplayActive();
+    }
+
     _notifyUserGesture() {
       if (this.cb && typeof this.cb.onUserGesture === 'function') {
         this.cb.onUserGesture();
@@ -95,32 +99,34 @@
         this.keys[code] = true;
 
         if (!alreadyDown) {
-          if (code === 'KeyC' || code === 'ControlLeft' || code === 'ControlRight') {
-            this.crouchToggle = !this.crouchToggle;
-          } else if (code === 'KeyE' || code === 'KeyF') {
-            this.actions.interact = true;
-          } else if (code === 'KeyQ') {
-            this.actions.quickConsumable = true;
-          } else if (code === 'KeyB') {
-            this.actions.toggleCamp = true;
-          } else if (code === 'Space') {
-            if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) {
-              this.actions.dodge = true;
-            } else {
-              this.actions.meleeSlash = true;
-            }
-          } else if (code === 'Digit1') {
-            this.actions.weaponSelect = 'parang';
-          } else if (code === 'Digit2') {
-            this.actions.weaponSelect = 'crossbow';
-          } else if (code === 'Digit3') {
-            this.actions.weaponSelect = 'pistol';
-          } else if (code === 'Digit4') {
-            this.actions.weaponSelect = 'decoy';
-          } else if (code === 'KeyM' && this.cb.onToggleMute) {
+          if (code === 'KeyM' && this.cb.onToggleMute) {
             this.cb.onToggleMute();
           } else if (code === 'KeyJ' && this.cb.onOpenDossier) {
             this.cb.onOpenDossier();
+          } else if (code === 'KeyC' || code === 'ControlLeft' || code === 'ControlRight') {
+            this.crouchToggle = !this.crouchToggle;
+          } else if (this._isGameplayActive()) {
+            if (code === 'KeyE' || code === 'KeyF') {
+              this.actions.interact = true;
+            } else if (code === 'KeyQ') {
+              this.actions.quickConsumable = true;
+            } else if (code === 'KeyB') {
+              this.actions.toggleCamp = true;
+            } else if (code === 'Space') {
+              if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) {
+                this.actions.dodge = true;
+              } else {
+                this.actions.meleeSlash = true;
+              }
+            } else if (code === 'Digit1') {
+              this.actions.weaponSelect = 'parang';
+            } else if (code === 'Digit2') {
+              this.actions.weaponSelect = 'crossbow';
+            } else if (code === 'Digit3') {
+              this.actions.weaponSelect = 'pistol';
+            } else if (code === 'Digit4') {
+              this.actions.weaponSelect = 'decoy';
+            }
           }
         }
       });
@@ -154,6 +160,7 @@
         this.mouseScreen.x = e.clientX - rect.left;
         this.mouseScreen.y = e.clientY - rect.top;
         this.mouseActive = e.pointerType !== 'touch';
+        if (!this._isGameplayActive()) return;
         if (e.button === 0 || e.pointerType === 'touch') {
           this.actions.attackPrimary = true;
         } else if (e.button === 2) {
@@ -228,7 +235,7 @@
       }
 
       // Multi-touch isolated pointerdown bindings: right thumb taps never conflict with left thumb D-Pad
-      const bindMultiTouchTap = (id, fn) => {
+      const bindMultiTouchTap = (id, fn, requireGameplay) => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener('pointerdown', (e) => {
@@ -236,28 +243,29 @@
           e.preventDefault();
           e.stopPropagation();
           this._notifyUserGesture();
+          if (requireGameplay && !this._isGameplayActive()) return;
           fn();
         });
       };
 
       bindMultiTouchTap('btn-sprint-center', () => {
         this.touchSprintToggle = !this.touchSprintToggle;
-      });
+      }, false);
       bindMultiTouchTap('btn-action-hand', () => {
         this.actions.interact = true;
-      });
+      }, true);
       bindMultiTouchTap('btn-action-crosshair', () => {
         this.actions.attackRanged = true;
-      });
+      }, true);
       bindMultiTouchTap('btn-action-reticle', () => {
         this.actions.meleeSlash = true;
-      });
+      }, true);
       bindMultiTouchTap('btn-action-bag', () => {
         this.actions.quickConsumable = true;
-      });
+      }, true);
       bindMultiTouchTap('btn-action-crouch', () => {
         this.crouchToggle = !this.crouchToggle;
-      });
+      }, false);
     }
 
     _setKnobVisual(ox, oy) {
@@ -301,8 +309,7 @@
       }
     }
 
-    consumeActions() {
-      const snapshot = Object.assign({}, this.actions);
+    clearActions() {
       this.actions.attackPrimary = false;
       this.actions.attackRanged = false;
       this.actions.meleeSlash = false;
@@ -311,6 +318,11 @@
       this.actions.toggleCamp = false;
       this.actions.dodge = false;
       this.actions.weaponSelect = null;
+    }
+
+    consumeActions() {
+      const snapshot = Object.assign({}, this.actions);
+      this.clearActions();
       return snapshot;
     }
   }

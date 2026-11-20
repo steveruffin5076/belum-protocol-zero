@@ -78,10 +78,10 @@
         scrapWire: 1
       };
 
-      // 8-Frame Animators
+      // 8-Frame Animators (Player Part A5: scale=1.06 matches slash height to walk height)
       this.animWalk = Animator ? new Animator({ fps: 8, framePrefix: 'kancil_walk' }) : null;
       this.animStealth = Animator ? new Animator({ fps: 8, framePrefix: 'kancil_stealth' }) : null;
-      this.animParang = Animator ? new Animator({ fps: 16, framePrefix: 'kancil_parang', loop: false }) : null;
+      this.animParang = Animator ? new Animator({ fps: 16, framePrefix: 'kancil_parang', loop: false, scale: 1.06 }) : null;
     }
 
     get centerX() {
@@ -247,6 +247,8 @@
       }
 
       // Axis-separated movement & collision
+      const prevX = this.x;
+      const prevY = this.y;
       const nextX = this.x + vx * safeDt;
       if (!this._collidesSolid(nextX, this.y, level)) {
         this.x = nextX;
@@ -263,6 +265,9 @@
       this.x = Math.max(minX, Math.min(maxX, this.x));
       this.y = Math.max(24, Math.min(maxY, this.y));
 
+      // Player Part A3: Match walk/sprint/crouch animation fps to actual movement speed (px/s)
+      const actualSpeed = safeDt > 0 ? Math.hypot(this.x - prevX, this.y - prevY) / safeDt : 0;
+
       // Update fern / hollow log concealment
       this.updateConcealment(level);
 
@@ -270,9 +275,11 @@
       if (this.parangAnimTimer > 0 && this.animParang) {
         this.animParang.update(safeDt, true);
       } else if (this.crouching && this.animStealth) {
-        this.animStealth.update(safeDt, this.moving);
+        this.animStealth.fps = Math.max(4, Math.min(12, (8 * actualSpeed) / 96));
+        this.animStealth.update(safeDt, this.moving && actualSpeed > 1);
       } else if (this.animWalk) {
-        this.animWalk.update(safeDt, this.moving);
+        this.animWalk.fps = Math.max(4, Math.min(16, (8 * actualSpeed) / 162));
+        this.animWalk.update(safeDt, this.moving && actualSpeed > 1);
       }
     }
 
@@ -348,13 +355,20 @@
         this._drawFallbackInk(ctx);
       }
 
-      // Hurt flash crimson rim
+      // Hurt flash indicator (steady soft tint when Reduce flashing is enabled)
       if (this.hurtFlashTimer > 0) {
-        ctx.strokeStyle = '#F85A5A';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(this.centerX, this.y + this.height * 0.5, 28, 0, Math.PI * 2);
-        ctx.stroke();
+        if (global.BelumGame && global.BelumGame.reduceFlash) {
+          ctx.fillStyle = 'rgba(248, 90, 90, 0.22)';
+          ctx.beginPath();
+          ctx.ellipse(this.centerX, this.y + this.height * 0.52, 22, 26, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = '#F85A5A';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(this.centerX, this.y + this.height * 0.5, 28, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
       // Subtle aim directional tick when armed with ranged/decoy

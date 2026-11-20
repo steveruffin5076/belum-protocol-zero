@@ -77,6 +77,13 @@
       this.patrolSpeed = cfg.patrolSpeed || 68;
       this.alertSpeed = cfg.alertSpeed || 108;
 
+      // Fix 2: Stuck-guard recovery timers
+      this.stuckTimer = 0;
+      this.lastProgressDist = Infinity;
+      this.sidestepTimer = 0;
+      this.sidestepSide = 1;
+      this.skippedWaypoints = 0;
+
       // State Machine: PATROL | SUSPICIOUS | ALERT | DEAD
       this.state = 'PATROL';
       this.suspicionTarget = null;
@@ -90,13 +97,14 @@
       this.burstRemaining = 0;
       this.burstIntervalTimer = 0;
       this.firingAnimTimer = 0;
+      this.holdingAimPose = false;
       this.bulletDamage = this.role === 'commander' ? 4 : 3;
 
-      // 8-frame animators (Phase B3: side + up/down directional sheets with graceful fallback)
-      this.animPatrol = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol' }) : null;
-      this.animPatrolUp = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol_up' }) : null;
-      this.animPatrolDown = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol_down' }) : null;
-      this.animFire = Animator ? new Animator({ fps: 12, framePrefix: 'merc_fire' }) : null;
+      // 8-frame animators (Phase B3 + Enemy A1/A3: directional sheets + burst-synced fire + height scale matching)
+      this.animPatrol = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol', scale: 1.0 }) : null;
+      this.animPatrolUp = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol_up', scale: 0.98 }) : null;
+      this.animPatrolDown = Animator ? new Animator({ fps: 8, framePrefix: 'merc_patrol_down', scale: 1.0 }) : null;
+      this.animFire = Animator ? new Animator({ fps: 1 / 0.13, loop: false, framePrefix: 'merc_fire', scale: 1.12 }) : null;
       this.animFireUp = null;
       this.animFireDown = null;
       this.spriteDir = 'side';
@@ -139,7 +147,10 @@
       } else {
         this.facingAngle = normalizeAngle(this.facingAngle + Math.sign(diff) * maxStep);
       }
-      this.facingRight = Math.cos(this.facingAngle) >= 0;
+      // Fix 3: +/-0.26 dead-band prevents 60fps flip-flicker when facing straight up or down
+      const c = Math.cos(this.facingAngle);
+      if (c > 0.26) this.facingRight = true;
+      else if (c < -0.26) this.facingRight = false;
       this._updateSpriteDir();
     }
 
@@ -172,8 +183,9 @@
       this.sweepBaseAngle = Number.isFinite(trackAngle) ? trackAngle : Math.atan2(fy - this.centerY, fx - this.centerX);
     }
 
-    triggerAlert(tx, ty, ctxEvents) {
+    triggerAlert(tx, ty, ctxEvents, faction) {
       if (this.dead) return;
+      const alertFaction = faction || 'PLAYER';
       const wasAlert = this.state === 'ALERT';
       this.state = 'ALERT';
       this.suspicionMeter = 1.0;
@@ -181,11 +193,11 @@
       this.alertMemoryTimer = 6.5;
       this.alertMarkTimer = 2.0;
       if (!wasAlert && ctxEvents && ctxEvents.onRadioAlert) {
-        ctxEvents.onRadioAlert(this);
+        ctxEvents.onRadioAlert(this, alertFaction);
       }
     }
 
-    takeDamage(amount, attackerPos, ctxEvents) {
+    takeDamage(amount, attackerPos, ctxEvents, attackerFaction) {
       if (this.dead) return 0;
       const dmg = Math.max(1, Math.round(amount || 1));
       this.hp = Math.max(0, this.hp - dmg);
@@ -198,7 +210,7 @@
           ctxEvents.onMercKilled(this);
         }
       } else if (attackerPos) {
-        this.triggerAlert(attackerPos.x, attackerPos.y, ctxEvents);
+        this.triggerAlert(attackerPos.x, attackerPos.y, ctxEvents, attackerFaction || 'PLAYER');
       }
       return dmg;
     }
@@ -266,7 +278,7 @@
             this.sweepBaseAngle = Math.atan2(player.centerY - this.centerY, player.centerX - this.centerX);
 
             if (this.suspicionMeter >= 1.0) {
-              this.triggerAlert(player.centerX, player.centerY, ctxEvents);
+              this.triggerAlert(player.centerX, player.centerY, ctxEvents, 'PLAYER');
               if (distP < targetDist) {
                 activeTarget = { x: player.centerX, y: player.centerY, ref: player, faction: 'PLAYER' };
                 targetDist = distP;
@@ -287,9 +299,10 @@
       }
 
       let isMoving = false;
+      this.holdingAimPose = false;
 
       if (activeTarget) {
-        this.triggerAlert(activeTarget.x, activeTarget.y, ctxEvents);
+        this.triggerAlert(activeTarget.x, activeTarget.y, ctxEvents, activeTarget.faction);
         const desiredAngle = Math.atan2(activeTarget.y - this.centerY, activeTarget.x - this.centerX);
         this._rotateToward(desiredAngle, safeDt);
 
@@ -297,15 +310,19 @@
           isMoving = this._moveToward(activeTarget.x, activeTarget.y, this.alertSpeed, safeDt, level);
         }
 
-        // Only fire when laser sight is reasonably aligned with target (respects turn inertia!)
+        // Enemy Part A1: Hold aim pose (frame 2 / idx 1) while turning to aim or waiting on fireCooldown
         const aimErr = Math.abs(normalizeAngle(desiredAngle - this.facingAngle));
+        if (aimErr >= 0.35 || (this.burstRemaining === 0 && this.firingAnimTimer <= 0)) {
+          this.holdingAimPose = true;
+        }
+
+        // Only fire when laser sight is reasonably aligned with target (respects turn inertia!)
         if (aimErr < 0.35) {
           if (this.burstRemaining > 0) {
             this.burstIntervalTimer -= safeDt;
             if (this.burstIntervalTimer <= 0) {
               this.burstRemaining--;
               this.burstIntervalTimer = 0.13;
-              this.firingAnimTimer = 0.22;
               if (ctxEvents && ctxEvents.onMercFire) {
                 const spread = (Math.random() - 0.5) * 0.08;
                 ctxEvents.onMercFire(this, this.facingAngle + spread, this.bulletDamage);
@@ -315,6 +332,16 @@
             this.burstRemaining = this.role === 'commander' ? 2 : 3;
             this.burstIntervalTimer = 0;
             this.fireCooldown = this.role === 'commander' ? 1.15 : 1.55;
+            this.holdingAimPose = false;
+            // Start fire animation synced at frame index 2 (first muzzle-flash frame) for remaining 6 frames
+            this.firingAnimTimer = 6 * 0.13;
+            const activeFire = (this.spriteDir === 'up' && this.animFireUp)
+              || (this.spriteDir === 'down' && this.animFireDown)
+              || this.animFire;
+            if (activeFire) {
+              activeFire.reset();
+              activeFire.currentFrame = 2;
+            }
           }
         }
       } else if (this.state === 'ALERT') {
@@ -323,7 +350,15 @@
           const dist = Math.hypot(this.suspicionTarget.x - this.centerX, this.suspicionTarget.y - this.centerY);
           if (dist > 28) {
             isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.alertSpeed, safeDt, level);
+            if (this.stuckTimer >= 2.0) {
+              // Fix 2: Give up blocked search target and sweep from current position
+              this.suspicionTarget = { x: this.centerX, y: this.centerY };
+              this.sweepBaseAngle = this.facingAngle;
+              this.stuckTimer = 0;
+              this.sidestepTimer = 0;
+            }
           } else {
+            this.stuckTimer = 0;
             this.sweepPhase += safeDt * 2.2;
             this._rotateToward(this.sweepBaseAngle + Math.sin(this.sweepPhase) * 0.78, safeDt);
           }
@@ -343,7 +378,14 @@
             this._rotateToward(lookAng, safeDt);
           } else if (dist > 34) {
             isMoving = this._moveToward(this.suspicionTarget.x, this.suspicionTarget.y, this.patrolSpeed * 1.12, safeDt, level);
+            if (this.stuckTimer >= 2.0) {
+              this.suspicionTarget = { x: this.centerX, y: this.centerY };
+              this.sweepBaseAngle = this.facingAngle;
+              this.stuckTimer = 0;
+              this.sidestepTimer = 0;
+            }
           } else {
+            this.stuckTimer = 0;
             // 45-degree laser sweep inspection before returning to patrol
             this.sweepPhase += safeDt * 2.4;
             const sweepOffset = Math.sin(this.sweepPhase) * (Math.PI * 0.25); // +/- 45 deg
@@ -354,6 +396,7 @@
           this.state = 'PATROL';
           this.suspicionTarget = null;
           this.suspicionMeter = 0;
+          this.stuckTimer = 0;
         }
       } else {
         // PATROL state
@@ -366,8 +409,22 @@
             if (dist < 18) {
               this.waypointIdx = (this.waypointIdx + 1) % this.waypoints.length;
               this.waitTimer = 1.25;
+              this.stuckTimer = 0;
+              this.sidestepTimer = 0;
+              this.skippedWaypoints = 0;
             } else {
               isMoving = this._moveToward(wp.x, wp.y, this.patrolSpeed, safeDt, level);
+              if (this.stuckTimer >= 2.0) {
+                // Fix 2: Skip unreachable waypoint; if all skipped in a row, wait 3s before retrying
+                this.waypointIdx = (this.waypointIdx + 1) % this.waypoints.length;
+                this.stuckTimer = 0;
+                this.sidestepTimer = 0;
+                this.skippedWaypoints++;
+                if (this.skippedWaypoints >= this.waypoints.length) {
+                  this.waitTimer = 3.0;
+                  this.skippedWaypoints = 0;
+                }
+              }
             }
           }
         }
@@ -390,14 +447,58 @@
       const dy = ty - this.centerY;
       const dist = Math.hypot(dx, dy);
       if (dist < 2) return false;
-      const vx = (dx / dist) * speed;
-      const vy = (dy / dist) * speed;
-      this._rotateToward(Math.atan2(dy, dx), dt);
 
-      const nx = this.x + vx * dt;
-      if (!this._hitsSolid(nx, this.y, level)) this.x = nx;
-      const ny = this.y + vy * dt;
-      if (!this._hitsSolid(this.x, ny, level)) this.y = ny;
+      let mvX = dx / dist;
+      let mvY = dy / dist;
+
+      // Fix 2: Perpendicular sidestep recovery after 0.6s stuck
+      const isSidestepping = this.sidestepTimer > 0;
+      if (isSidestepping) {
+        this.sidestepTimer = Math.max(0, this.sidestepTimer - dt);
+        mvX = (-dy / dist) * this.sidestepSide;
+        mvY = (dx / dist) * this.sidestepSide;
+        if (this.sidestepTimer <= 0) {
+          this.sidestepCooldown = 0.45;
+        }
+      } else if (this.sidestepCooldown > 0) {
+        this.sidestepCooldown = Math.max(0, this.sidestepCooldown - dt);
+      }
+
+      let vx = mvX * speed;
+      let vy = mvY * speed;
+      this._rotateToward(Math.atan2(vy, vx), dt);
+
+      const blockedX = this._hitsSolid(this.x + vx * dt, this.y, level);
+      const blockedY = this._hitsSolid(this.x, this.y + vy * dt, level);
+
+      // When sliding along a single blocking wall toward a diagonal target, keep full speed along the free axis
+      if (!isSidestepping) {
+        if (blockedY && !blockedX && Math.abs(dx) > 6) {
+          vx = Math.sign(dx) * speed;
+        } else if (blockedX && !blockedY && Math.abs(dy) > 6) {
+          vy = Math.sign(dy) * speed;
+        }
+      }
+
+      if (!this._hitsSolid(this.x + vx * dt, this.y, level)) this.x += vx * dt;
+      if (!this._hitsSolid(this.x, this.y + vy * dt, level)) this.y += vy * dt;
+
+      const afterDist = Math.hypot(tx - this.centerX, ty - this.centerY);
+      const progress = dist - afterDist;
+      this.lastProgressDist = afterDist;
+
+      if (progress < 0.5 * speed * dt) {
+        this.stuckTimer += dt;
+        if (this.stuckTimer >= 0.6 && this.stuckTimer < 2.0 && this.sidestepTimer <= 0 && !(this.sidestepCooldown > 0)) {
+          this.sidestepSide *= -1;
+          this.sidestepTimer = 0.4;
+        }
+      } else {
+        this.stuckTimer = 0;
+        this.sidestepTimer = 0;
+        this.sidestepCooldown = 0;
+        this.skippedWaypoints = 0;
+      }
       return true;
     }
 
@@ -526,6 +627,19 @@
         } else if (this.animFire && this.animFire.isReady()) {
           drawn = this.animFire.draw(ctx, drawX, drawY, drawW, drawH, !this.facingRight);
         }
+      } else if (this.holdingAimPose && this.state === 'ALERT') {
+        const aimAnim = (this.spriteDir === 'up' && this.animFireUp && this.animFireUp.isReady())
+          ? this.animFireUp
+          : (this.spriteDir === 'down' && this.animFireDown && this.animFireDown.isReady())
+            ? this.animFireDown
+            : (this.animFire && this.animFire.isReady() ? this.animFire : null);
+        if (aimAnim) {
+          const prevFrame = aimAnim.currentFrame;
+          aimAnim.currentFrame = 1; // Frame 2 (1-indexed): braced aiming pose
+          const flip = (aimAnim === this.animFire) ? !this.facingRight : false;
+          drawn = aimAnim.draw(ctx, drawX, drawY, drawW, drawH, flip);
+          aimAnim.currentFrame = prevFrame;
+        }
       } else {
         if (this.spriteDir === 'up' && this.animPatrolUp && this.animPatrolUp.isReady()) {
           drawn = this.animPatrolUp.draw(ctx, drawX, drawY, drawW, drawH, false);
@@ -550,7 +664,7 @@
         ctx.stroke();
       }
 
-      // Commander Ward nameplate & HP bar
+      // Commander Ward nameplate & HP bar + Enemy Part A7 Role Marks (hidden when ALERT)
       if (!this.dead && (this.role === 'commander' || this.hp < this.maxHp)) {
         const bw = this.role === 'commander' ? 54 : 38;
         const bx = this.centerX - bw * 0.5;
@@ -566,8 +680,17 @@
           ctx.fillStyle = '#111E33';
           ctx.font = 'bold 10px "Courier New", monospace';
           ctx.textAlign = 'center';
-          ctx.fillText('CMDR WARD', this.centerX, by - 4);
+          ctx.fillText('CMDR WARD', this.centerX + 5, by - 4);
+          if (this.state !== 'ALERT') {
+            this._drawCommanderStar(ctx, this.centerX - 31, by - 8);
+          }
         }
+      }
+
+      // Enemy Part A7: Spotter ink binoculars mark above head (hidden when ALERT)
+      if (!this.dead && this.role === 'spotter' && this.state !== 'ALERT') {
+        const offsetY = (this.suspicionMeter > 0.04 || this.state === 'SUSPICIOUS') ? this.y - 42 : this.y - 22;
+        this._drawSpotterBinoculars(ctx, this.centerX, offsetY);
       }
 
       // Phase A2: Priority "!" (ALERT) -> "?" (SUSPICIOUS) -> nothing (PATROL)
@@ -594,13 +717,71 @@
       }
 
       if (this.hurtFlashTimer > 0) {
-        ctx.strokeStyle = '#F85A5A';
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-        ctx.arc(this.centerX, this.y + this.height * 0.5, 28, 0, Math.PI * 2);
-        ctx.stroke();
+        if (global.BelumGame && global.BelumGame.reduceFlash) {
+          ctx.fillStyle = 'rgba(248, 90, 90, 0.22)';
+          ctx.beginPath();
+          ctx.ellipse(this.centerX, this.y + this.height * 0.52, 22, 26, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = '#F85A5A';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(this.centerX, this.y + this.height * 0.5, 28, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
+      ctx.restore();
+    }
+
+    _drawSpotterBinoculars(ctx, cx, cy) {
+      ctx.save();
+      ctx.fillStyle = '#F7F3E8';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 1.6;
+      // Left & right binocular lenses + bridge
+      ctx.beginPath();
+      ctx.arc(cx - 6, cy, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx + 6, cy, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - 2, cy - 1);
+      ctx.lineTo(cx + 2, cy - 1);
+      ctx.stroke();
+      // Inner lens glints
+      ctx.fillStyle = '#111E33';
+      ctx.beginPath();
+      ctx.arc(cx - 6, cy, 1.5, 0, Math.PI * 2);
+      ctx.arc(cx + 6, cy, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    _drawCommanderStar(ctx, cx, cy) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.fillStyle = '#111E33';
+      ctx.strokeStyle = '#F7F3E8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let p = 0; p < 5; p++) {
+        const oa = (p * Math.PI * 2) / 5 - Math.PI * 0.5;
+        const ia = oa + Math.PI / 5;
+        const ox = Math.cos(oa) * 5.2;
+        const oy = Math.sin(oa) * 5.2;
+        const ix = Math.cos(ia) * 2.2;
+        const iy = Math.sin(ia) * 2.2;
+        if (p === 0) ctx.moveTo(ox, oy);
+        else ctx.lineTo(ox, oy);
+        ctx.lineTo(ix, iy);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
       ctx.restore();
     }
   }
