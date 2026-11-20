@@ -70,6 +70,9 @@
     // Build 2.5D obstacles & cover props across all 4 sectors
     const obsSpecs = [
       // === SECTOR 1: Sungai Belum Riverbank ===
+      { type: 'canopy_tree', x: 540, y: 175, width: 160, height: 240, colX: 595, colY: 345, colW: 54, colH: 58 },
+      { type: 'mud_rocks', x: 155, y: 410, width: 140, height: 70 },
+      { type: 'mud_rocks', x: 465, y: 860, width: 140, height: 70 },
       { type: 'bamboo', x: 165, y: 180, width: 120, height: 125 },
       { type: 'bamboo', x: 310, y: 140, width: 130, height: 130 },
       { type: 'bamboo', x: 170, y: 980, width: 140, height: 130 },
@@ -84,7 +87,7 @@
       // === SECTOR 2: Abandoned Logging Outpost & Field Lab ===
       { type: 'barracks', x: 1140, y: 210, width: 280, height: 150, label: 'LOGGING BARRACKS' },
       { type: 'barracks', x: 1580, y: 195, width: 250, height: 150, label: 'VBS FIELD LAB TENT' },
-      { type: 'barracks', x: 1220, y: 900, width: 230, height: 135, label: 'DIESEL GENERATOR SHED' },
+      { type: 'generator_shed', x: 1220, y: 900, width: 230, height: 135, label: 'DIESEL GENERATOR SHED' },
       { type: 'fence', x: 1065, y: 390, width: 26, height: 150 },
       { type: 'fence', x: 1065, y: 760, width: 26, height: 180 },
       { type: 'hollow_log', x: 1360, y: 610, width: 155, height: 80 },
@@ -97,6 +100,8 @@
       // === SECTOR 3: The Infected Ravine (Spore Zone & Boars) ===
       { type: 'bunker_wall', x: 2180, y: 90, width: 960, height: 110 },
       { type: 'bunker_wall', x: 2180, y: 1080, width: 960, height: 120 },
+      { type: 'canopy_tree', x: 2220, y: 215, width: 160, height: 240, colX: 2275, colY: 385, colW: 54, colH: 58 },
+      { type: 'mud_rocks', x: 2775, y: 895, width: 140, height: 70 },
       { type: 'hollow_log', x: 2290, y: 470, width: 160, height: 82 },
       { type: 'fern', x: 2255, y: 685, width: 124, height: 88 },
       { type: 'fern', x: 2555, y: 410, width: 124, height: 88 },

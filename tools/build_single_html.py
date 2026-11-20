@@ -107,6 +107,22 @@ def build():
         ("assets/environment/fern_clump.png", 300, True),
         ("assets/environment/bamboo_cluster.png", 320, True),
         ("assets/environment/gate_blast_door.png", 360, True),
+        ("assets/environment/ancient_canopy_tree.png", 340, False),
+        ("assets/environment/riverbank_mud_rocks.png", 240, False),
+        ("assets/environment/mutated_rafflesia.png", 240, False),
+        ("assets/buildings/logging_barracks.png", 360, False),
+        ("assets/buildings/generator_shed.png", 300, False),
+        ("assets/buildings/blast_bunker_door.png", 360, False),
+        ("assets/buildings/keycard_pedestal.png", 240, False),
+        ("assets/buildings/culvert_grate.png", 300, False),
+        ("assets/ui/items/parang.png", 64, False),
+        ("assets/ui/items/crossbow.png", 64, False),
+        ("assets/ui/items/pistol_9mm.png", 64, False),
+        ("assets/ui/items/decoy_rocks.png", 64, False),
+        ("assets/ui/items/canteen.png", 64, False),
+        ("assets/ui/items/bamboo_shoots.png", 64, False),
+        ("assets/ui/items/keycard.png", 64, False),
+        ("assets/ui/items/usb_drive.png", 64, False),
     ]
     for rel, max_side, prekey in env_specs:
         full = os.path.join(ROOT, rel)
@@ -125,6 +141,11 @@ def build():
         f"<style>\n{css}\n</style>",
         html,
     )
+
+    # Inline HTML <img src="assets/ui/items/..."> icons for 100% offline playback
+    for rel, uri in inline_assets.items():
+        if rel.startswith("assets/ui/items/"):
+            html = html.replace(f'src="{rel}"', f'src="{uri}"')
 
     # Extract script list in exact order
     script_paths = re.findall(r'<script\s+src="(src/[^"]+\.js)"></script>', html)

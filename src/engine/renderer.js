@@ -29,8 +29,35 @@
       this.paperTextureImg = null;
       this.rainDrops = [];
       this.time = 0;
+      this.sprites = Object.create(null);
       this._initRain();
       this._loadPaperTexture();
+      this._preloadWorldAndItemSprites();
+    }
+
+    _loadSprite(key, src) {
+      if (typeof Image === 'undefined') return;
+      const entry = { img: null, ready: false };
+      this.sprites[key] = entry;
+      const img = new Image();
+      img.onload = () => {
+        entry.img = img;
+        entry.ready = true;
+      };
+      img.src = src;
+    }
+
+    _preloadWorldAndItemSprites() {
+      this._loadSprite('rafflesia', 'assets/environment/mutated_rafflesia.png');
+      this._loadSprite('keycard_pedestal', 'assets/buildings/keycard_pedestal.png');
+      this._loadSprite('weapon_parang', 'assets/ui/items/parang.png');
+      this._loadSprite('weapon_crossbow', 'assets/ui/items/crossbow.png');
+      this._loadSprite('weapon_pistol', 'assets/ui/items/pistol_9mm.png');
+      this._loadSprite('decoy_rocks', 'assets/ui/items/decoy_rocks.png');
+      this._loadSprite('dirty_water', 'assets/ui/items/canteen.png');
+      this._loadSprite('bamboo_shoots', 'assets/ui/items/bamboo_shoots.png');
+      this._loadSprite('keycard', 'assets/ui/items/keycard.png');
+      this._loadSprite('encrypted_drive', 'assets/ui/items/usb_drive.png');
     }
 
     _initRain() {
@@ -523,20 +550,25 @@
         ctx.arc(sp.x, sp.y, r, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.strokeStyle = PALETTE.inkDeep;
-        ctx.fillStyle = 'rgba(248, 90, 90, 0.65)';
-        ctx.lineWidth = 1.6;
-        for (let p = 0; p < 5; p++) {
-          const ang = (p * Math.PI * 2) / 5 + 0.3;
+        const raf = this.sprites && this.sprites.rafflesia;
+        if (raf && raf.ready && raf.img) {
+          ctx.drawImage(raf.img, sp.x - 42, sp.y - 38, 84, 75);
+        } else {
+          ctx.strokeStyle = PALETTE.inkDeep;
+          ctx.fillStyle = 'rgba(248, 90, 90, 0.65)';
+          ctx.lineWidth = 1.6;
+          for (let p = 0; p < 5; p++) {
+            const ang = (p * Math.PI * 2) / 5 + 0.3;
+            ctx.beginPath();
+            ctx.ellipse(sp.x + Math.cos(ang) * 14, sp.y + Math.sin(ang) * 11, 10, 7, ang, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.fillStyle = PALETTE.inkMid;
           ctx.beginPath();
-          ctx.ellipse(sp.x + Math.cos(ang) * 14, sp.y + Math.sin(ang) * 11, 10, 7, ang, 0, Math.PI * 2);
+          ctx.arc(sp.x, sp.y, 7, 0, Math.PI * 2);
           ctx.fill();
-          ctx.stroke();
         }
-        ctx.fillStyle = PALETTE.inkMid;
-        ctx.beginPath();
-        ctx.arc(sp.x, sp.y, 7, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
       }
 
@@ -692,31 +724,72 @@
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         if (it.collected) continue;
+
+        // Bespoke 2.5D Biometric Keycard Terminal Pedestal
+        if (it.type === 'blast_terminal') {
+          const ped = this.sprites && this.sprites.keycard_pedestal;
+          ctx.save();
+          if (ped && ped.ready && ped.img) {
+            ctx.drawImage(ped.img, it.x - 26, it.y - 52, 52, 76);
+            // Pulsing crimson biometric scanner line
+            const pulse = 0.55 + 0.45 * Math.sin(this.time * 5);
+            ctx.fillStyle = `rgba(248, 90, 90, ${pulse.toFixed(3)})`;
+            ctx.fillRect(it.x - 9, it.y - 22, 18, 3);
+            ctx.fillStyle = PALETTE.inkMid;
+            ctx.font = 'bold 10px "Courier New", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(it.label || '', it.x, it.y - 58);
+            ctx.restore();
+            continue;
+          }
+          ctx.restore();
+        }
+
         const bob = Math.sin(this.time * 3.5 + i) * 3;
+        const iconEntry = this.sprites && this.sprites[it.type];
+
         ctx.save();
         ctx.translate(it.x, it.y + bob);
 
         ctx.fillStyle = 'rgba(17, 30, 51, 0.16)';
         ctx.beginPath();
-        ctx.ellipse(0, 12 - bob, 16, 7, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, 14 - bob, 18, 7, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = it.highlight ? '#FFE3E3' : PALETTE.paperWarm;
-        ctx.strokeStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.roundRect(-14, -14, 28, 24, 4);
-        ctx.fill();
-        ctx.stroke();
+        if (iconEntry && iconEntry.ready && iconEntry.img) {
+          // Crisp hand-drawn circular parchment medallion with 64x64 transparent ink item icon
+          ctx.fillStyle = it.highlight ? '#FFF0EE' : PALETTE.paperWarm;
+          ctx.strokeStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(0, -2, 19, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
 
-        ctx.fillStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
-        ctx.font = 'bold 10px "Courier New", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(it.badge || 'ITEM', 0, 2);
+          ctx.drawImage(iconEntry.img, -16, -18, 32, 32);
 
-        ctx.fillStyle = PALETTE.inkMid;
-        ctx.font = 'bold 10px "Courier New", monospace';
-        ctx.fillText(it.label || '', 0, -20);
+          ctx.fillStyle = PALETTE.inkMid;
+          ctx.font = 'bold 10px "Courier New", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(it.label || '', 0, -26);
+        } else {
+          ctx.fillStyle = it.highlight ? '#FFE3E3' : PALETTE.paperWarm;
+          ctx.strokeStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.roundRect(-14, -14, 28, 24, 4);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.fillStyle = it.highlight ? PALETTE.crimsonDeep : PALETTE.inkDeep;
+          ctx.font = 'bold 10px "Courier New", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(it.badge || 'ITEM', 0, 2);
+
+          ctx.fillStyle = PALETTE.inkMid;
+          ctx.font = 'bold 10px "Courier New", monospace';
+          ctx.fillText(it.label || '', 0, -20);
+        }
         ctx.restore();
       }
     }

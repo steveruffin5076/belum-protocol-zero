@@ -53,11 +53,16 @@
       this.rustleDuration = 0.4;
       this.rustleDir = 1;
 
-      // Link isolated sliced environment PNGs
+      // Link isolated hand-inked PNG sprites (Task A Environment & Architecture Pack)
       if (this.type === 'hollow_log') this.spriteEntry = loadPropSprite('assets/environment/hollow_log.png');
       else if (this.type === 'fern') this.spriteEntry = loadPropSprite('assets/environment/fern_clump.png');
       else if (this.type === 'bamboo') this.spriteEntry = loadPropSprite('assets/environment/bamboo_cluster.png');
-      else if (this.type === 'blast_gate') this.spriteEntry = loadPropSprite('assets/environment/gate_blast_door.png');
+      else if (this.type === 'canopy_tree') this.spriteEntry = loadPropSprite('assets/environment/ancient_canopy_tree.png');
+      else if (this.type === 'mud_rocks') this.spriteEntry = loadPropSprite('assets/environment/riverbank_mud_rocks.png');
+      else if (this.type === 'barracks') this.spriteEntry = loadPropSprite('assets/buildings/logging_barracks.png');
+      else if (this.type === 'generator_shed') this.spriteEntry = loadPropSprite('assets/buildings/generator_shed.png');
+      else if (this.type === 'culvert_grate') this.spriteEntry = loadPropSprite('assets/buildings/culvert_grate.png');
+      else if (this.type === 'blast_gate') this.spriteEntry = loadPropSprite('assets/buildings/blast_bunker_door.png');
       else this.spriteEntry = null;
     }
 
@@ -110,12 +115,22 @@
         ctx.translate(-pivotX, -pivotY);
       }
 
-      // Draw generated hand-inked PNG prop if ready
+      // Draw generated hand-inked PNG prop or building if ready
       if (this.spriteEntry && this.spriteEntry.ready && this.spriteEntry.img) {
         if (this.type === 'fern') {
           ctx.globalAlpha = 0.92;
         }
-        ctx.drawImage(this.spriteEntry.img, this.x - 10, this.y - 10, this.width + 20, this.height + 20);
+        const padX = (this.type === 'barracks' || this.type === 'generator_shed') ? 16 : 10;
+        const padTop = this.type === 'canopy_tree' ? 28 : (this.type === 'barracks' || this.type === 'generator_shed' ? 24 : 10);
+        const padBot = 10;
+        ctx.drawImage(
+          this.spriteEntry.img,
+          this.x - padX,
+          this.y - padTop,
+          this.width + padX * 2,
+          this.height + padTop + padBot
+        );
+
         if (this.type === 'fern') {
           // Subtle dashed stealth hint outline on forest floor
           ctx.strokeStyle = 'rgba(62, 124, 89, 0.34)';
@@ -125,13 +140,31 @@
           ctx.ellipse(this.x + this.width * 0.5, this.y + this.height * 0.72, this.width * 0.44, this.height * 0.28, 0, 0, Math.PI * 2);
           ctx.stroke();
           ctx.setLineDash([]);
+        } else if (this.type === 'generator_shed') {
+          // Faint rising ink exhaust smoke puffs from diesel pipe
+          const t = time || 0;
+          for (let s = 0; s < 3; s++) {
+            const phase = (t * 0.85 + s * 0.33) % 1;
+            const sx = this.x + this.width * 0.22 + Math.sin(t * 2 + s) * 6;
+            const sy = this.y - 16 - phase * 34;
+            const r = 5 + phase * 9;
+            ctx.strokeStyle = `rgba(28, 40, 68, ${((1 - phase) * 0.36).toFixed(3)})`;
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+
+        if (this.label) {
+          this._drawStructureStamp(ctx, this.x + this.width * 0.5, this.y + this.height + 10, this.label);
         }
         ctx.restore();
         return;
       }
 
       // Crisp Prussian Blue dip-pen etched procedural structures & fallbacks
-      if (this.type === 'barracks') {
+      if (this.type === 'barracks' || this.type === 'generator_shed') {
         this._drawBarracks(ctx);
       } else if (this.type === 'bunker_wall') {
         this._drawBunkerWall(ctx);
@@ -148,23 +181,43 @@
       ctx.restore();
     }
 
+    _drawStructureStamp(ctx, cx, cy, text) {
+      ctx.save();
+      ctx.font = 'bold 10px "Courier New", monospace';
+      const tw = ctx.measureText(text).width;
+      const bw = tw + 14;
+      const bh = 18;
+      ctx.fillStyle = 'rgba(247, 243, 232, 0.92)';
+      ctx.strokeStyle = '#111E33';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(cx - bw * 0.5, cy - bh * 0.5, bw, bh, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#111E33';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, cx, cy + 0.5);
+      ctx.restore();
+    }
+
     _drawBlastGate(ctx, time) {
       const slide = this.openProgress * (this.height * 0.85);
-      // Bunker frame
+      // Brutalist reinforced concrete gantry frame
       ctx.fillStyle = '#E6DAC0';
       ctx.strokeStyle = '#111E33';
       ctx.lineWidth = 2.6;
       ctx.fillRect(this.x, this.y - 16, this.width, 18);
       ctx.strokeRect(this.x, this.y - 16, this.width, 18);
 
-      // Sliding steel corrugated gate leaf
+      // Sliding hydraulic blast bunker door
       const leafH = Math.max(8, this.height - slide);
       if (this.spriteEntry && this.spriteEntry.ready && this.spriteEntry.img && this.openProgress < 0.95) {
         ctx.save();
         ctx.beginPath();
-        ctx.rect(this.x - 14, this.y - 10, this.width + 28, leafH + 14);
+        ctx.rect(this.x - 42, this.y - 24, this.width + 84, leafH + 34);
         ctx.clip();
-        ctx.drawImage(this.spriteEntry.img, this.x - 14, this.y - 10 - slide, this.width + 28, this.height + 24);
+        ctx.drawImage(this.spriteEntry.img, this.x - 42, this.y - 24 - slide, this.width + 84, this.height + 44);
         ctx.restore();
       } else if (this.openProgress < 0.95) {
         ctx.fillStyle = '#D5C5A3';
@@ -189,34 +242,40 @@
 
     _drawCulvertGrate(ctx) {
       if (this.unlocked) {
+        if (this.spriteEntry && this.spriteEntry.ready && this.spriteEntry.img) {
+          ctx.save();
+          ctx.globalAlpha = 0.42;
+          ctx.drawImage(this.spriteEntry.img, this.x - 36, this.y - 8, 108, this.height + 16);
+          ctx.restore();
+        }
         ctx.strokeStyle = '#3E7C59';
         ctx.lineWidth = 2;
         ctx.setLineDash([4, 4]);
         ctx.strokeRect(this.x, this.y, this.width, this.height);
         ctx.setLineDash([]);
-        ctx.fillStyle = '#2E6F4E';
-        ctx.font = 'bold 10px "Courier New", monospace';
-        ctx.fillText('CULVERT OPEN', this.x - 12, this.y - 6);
+        this._drawStructureStamp(ctx, this.x + this.width * 0.5, this.y - 10, 'CULVERT OPEN');
         return;
       }
-      ctx.fillStyle = 'rgba(28, 40, 68, 0.2)';
-      ctx.strokeStyle = '#111E33';
-      ctx.lineWidth = 2.4;
-      ctx.fillRect(this.x, this.y, this.width, this.height);
-      ctx.strokeRect(this.x, this.y, this.width, this.height);
-      for (let y = this.y + 10; y < this.y + this.height; y += 10) {
-        ctx.beginPath();
-        ctx.moveTo(this.x, y);
-        ctx.lineTo(this.x + this.width, y);
-        ctx.stroke();
+      if (this.spriteEntry && this.spriteEntry.ready && this.spriteEntry.img) {
+        ctx.drawImage(this.spriteEntry.img, this.x - 36, this.y - 8, 108, this.height + 16);
+      } else {
+        ctx.fillStyle = 'rgba(28, 40, 68, 0.2)';
+        ctx.strokeStyle = '#111E33';
+        ctx.lineWidth = 2.4;
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        ctx.strokeRect(this.x, this.y, this.width, this.height);
+        for (let y = this.y + 10; y < this.y + this.height; y += 10) {
+          ctx.beginPath();
+          ctx.moveTo(this.x, y);
+          ctx.lineTo(this.x + this.width, y);
+          ctx.stroke();
+        }
       }
-      ctx.fillStyle = '#C9323B';
-      ctx.font = 'bold 10px "Courier New", monospace';
-      ctx.fillText('LOCKED GRATE', this.x - 18, this.y - 6);
+      this._drawStructureStamp(ctx, this.x + this.width * 0.5, this.y - 10, 'LOCKED GRATE');
     }
 
     _drawBarracks(ctx) {
-      // 2.5D Oblique wooden logging shack with pitched cross-hatched roof
+      // 2.5D Oblique wooden logging shack fallback
       ctx.fillStyle = 'rgba(17, 30, 51, 0.16)';
       ctx.fillRect(this.x + 8, this.y + 12, this.width, this.height);
 
@@ -226,7 +285,6 @@
       ctx.fillRect(this.x, this.y + 24, this.width, this.height - 24);
       ctx.strokeRect(this.x, this.y + 24, this.width, this.height - 24);
 
-      // Sloped corrugated roof
       ctx.fillStyle = '#E4D7BC';
       ctx.beginPath();
       ctx.moveTo(this.x - 8, this.y + 28);
@@ -237,7 +295,6 @@
       ctx.fill();
       ctx.stroke();
 
-      // Wood plank cross-hatching
       ctx.strokeStyle = 'rgba(17, 30, 51, 0.35)';
       ctx.lineWidth = 1.1;
       for (let x = this.x + 16; x < this.x + this.width - 8; x += 18) {

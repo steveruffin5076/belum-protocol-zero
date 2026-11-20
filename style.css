@@ -565,8 +565,23 @@ html, body {
   opacity: 0.75;
 }
 
+.slot-icon {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  display: block;
+  margin-top: 1px;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.weapon-slot.active .slot-icon {
+  background: var(--paper-light);
+  padding: 2px;
+}
+
 .slot-name {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
 }
 

@@ -506,7 +506,7 @@
           this.triggerHitStop(45);
           this._vibrate([40, 60, 80]);
           if (this.camera) this.camera.addTrauma(0.8, -boar.chargeDirX, -boar.chargeDirY);
-          if (this.sound) this.sound.playBoarImpact();
+          if (this.sound) this.sound.playBoarWallCrash();
           this._spawnFloat(boar.centerX, boar.y - 18, 'CONCUSSED! (2.6s)', '#F85A5A', true);
           if (this.hud) this.hud.showToast('MATADOR STUN: BOAR SLAMMED INTO WALL!', 2.4);
         },
@@ -594,25 +594,34 @@
         }
       }
 
-      // Wet Mud Footprints in Sector 1 (Riverbank) & Sector 3 (Infected Ravine)
+      // Surface-Aware Footstep Foley ('ferns' | 'wood' | 'mud') + Wet Mud Footprints (Sector 1 & 3)
       const moved = Math.hypot(p.centerX - prevX, p.centerY - prevY);
       const inMudZone = this.currentSectorId === 1 || this.currentSectorId === 3;
-      if (inMudZone && moved > 0.2) {
+      if (moved > 0.2) {
         this.footprintDistAccum += moved;
-        if (this.footprintDistAccum >= 32) {
+        const stride = p.sprinting ? 38 : 32;
+        if (this.footprintDistAccum >= stride) {
           this.footprintDistAccum = 0;
           this.footprintStepSide *= -1;
-          const moveAng = Math.atan2(p.centerY - prevY, p.centerX - prevX);
-          const perpX = -Math.sin(moveAng) * 5 * this.footprintStepSide;
-          const perpY = Math.cos(moveAng) * 5 * this.footprintStepSide;
-          this.footprints.push({
-            x: p.centerX + perpX,
-            y: p.y + p.height - 4 + perpY,
-            angle: moveAng,
-            age: 0,
-            duration: 4.5,
-            inspected: false
-          });
+          if (this.sound) {
+            const surface = p.isConcealed
+              ? 'ferns'
+              : (this.currentSectorId === 2 ? 'wood' : 'mud');
+            this.sound.playFootstep(surface);
+          }
+          if (inMudZone) {
+            const moveAng = Math.atan2(p.centerY - prevY, p.centerX - prevX);
+            const perpX = -Math.sin(moveAng) * 5 * this.footprintStepSide;
+            const perpY = Math.cos(moveAng) * 5 * this.footprintStepSide;
+            this.footprints.push({
+              x: p.centerX + perpX,
+              y: p.y + p.height - 4 + perpY,
+              angle: moveAng,
+              age: 0,
+              duration: 4.5,
+              inspected: false
+            });
+          }
         }
       }
     }
@@ -917,7 +926,7 @@
           it.collected = true;
           this.level.blastGateOpening = true;
           this.level.blastGateTimer = 15.0;
-          if (this.sound) this.sound.playAlarmKlaxon();
+          if (this.sound) this.sound.playBlastGateOpen();
           if (this.camera) this.camera.addTrauma(0.55, -1, 0);
           if (this.hud) this.hud.showToast('BLAST GATE OVERRIDE INITIATED — SURVIVE 15 SECONDS!', 4.0);
           for (let mIdx = 0; mIdx < this.mercenaries.length; mIdx++) {
@@ -979,6 +988,7 @@
             this._emitAcousticRing(ev.x, ev.y, ev.radius, true);
             this._spawnFloat(ev.x, ev.y - 10, '*CLATTER*', '#111E33', false);
           } else if (ev.dropBolt) {
+            if (this.sound) this.sound.playBoltThud();
             this.level.interactables.push({
               id: `bolt_${Date.now()}_${i}`,
               type: 'bolt_pickup',
@@ -1004,6 +1014,7 @@
             if (Math.hypot(pr.x - m.centerX, pr.y - (m.y + m.height * 0.5)) < 26) {
               const dealt = m.takeDamage(pr.damage, { x: this.player.centerX, y: this.player.centerY }, aiEvents);
               this._spawnFloat(m.centerX, m.y - 14, String(dealt), '#F85A5A', true);
+              if (pr.retrievable && this.sound) this.sound.playBoltThud();
               if (m.dead) this.triggerHitStop(35);
               if (pr.retrievable) {
                 this.level.interactables.push({
